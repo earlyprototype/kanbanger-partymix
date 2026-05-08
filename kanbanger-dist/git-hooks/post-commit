@@ -1,0 +1,23 @@
+#!/bin/sh
+# Kanbanger Post-Commit Hook
+# Auto-syncs kanban if it was part of the commit
+
+# Check if _kanban.md was in the commit
+if git diff-tree --no-commit-id --name-only -r HEAD | grep -q "_kanban.md"; then
+    echo ""
+    echo "📋 Kanban was updated, syncing to GitHub..."
+    
+    # Try to sync
+    if command -v kanban-sync >/dev/null 2>&1; then
+        kanban-sync _kanban.md 2>&1 | grep -E "CREATE|UPDATE|ARCHIVE|OK|complete|ERROR" || true
+    elif command -v python >/dev/null 2>&1; then
+        python -m sync_kanban _kanban.md 2>&1 | grep -E "CREATE|UPDATE|ARCHIVE|OK|complete|ERROR" || true
+    else
+        echo "⚠️  Could not find kanban-sync command"
+        echo "Run manually: kanban-sync _kanban.md"
+    fi
+    
+    echo ""
+fi
+
+exit 0

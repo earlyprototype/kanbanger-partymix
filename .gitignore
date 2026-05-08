@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Cursor MCP config can be shared with team (no secrets in it)
+# Uses ${workspaceFolder} and ${env:VAR} for portability
+# .cursor/mcp.json is NOT ignored - commit it!
+
+# Kanban state files (local only)
+.kanban.json
+
+# Note: _kanban.md is NOT ignored - commit it to track task history!
+
+# Environment files with secrets
+.env
+.env.local
+
+# Development and internal docs
+IMPLEMENTATION_SUMMARY.md
+MIGRATION_STRATEGIES.md
+TRANSFER_TO_SPEC_ENGINE.md
+LLM_WORKFLOW.md
+SPEC_INTEGRATION.md
+spec_engine_integration.py
+
+# Note: kanbanger-dist/ is now tracked as the official distribution package
+
+# Project-specific files
+TESTING.md

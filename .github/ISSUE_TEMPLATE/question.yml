@@ -1,0 +1,57 @@
+name: Question
+description: Ask a question about kanbanger
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're here to help!
+        
+        Note: For general discussions, consider using [GitHub Discussions](https://github.com/earlyprototype/kanbanger/discussions) instead.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: What would you like to know?
+      placeholder: How do I sync multiple kanban files in the same repository?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Question Category
+      options:
+        - Installation / Setup
+        - Usage / How-to
+        - GitHub Integration
+        - LLM Integration
+        - Git Hooks
+        - Spec_Engine Integration
+        - Configuration
+        - Troubleshooting
+        - Best Practices
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Any additional context that might help us answer your question
+      placeholder: |
+        I'm trying to manage multiple projects in the same repository...
+        I've read the README but I'm not sure about...
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Have you checked these resources?
+      options:
+        - label: I've read the [README](https://github.com/earlyprototype/kanbanger#readme)
+        - label: I've read the [CONTRIBUTING.md](https://github.com/earlyprototype/kanbanger/blob/main/CONTRIBUTING.md)
+        - label: I've searched [existing issues](https://github.com/earlyprototype/kanbanger/issues)
+        - label: I've checked [closed issues](https://github.com/earlyprototype/kanbanger/issues?q=is%3Aissue+is%3Aclosed)

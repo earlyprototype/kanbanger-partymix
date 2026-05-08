@@ -1,0 +1,45 @@
+#!/bin/sh
+# Kanbanger Pre-Commit Hook
+# Ensures kanban is updated and synced before allowing commits
+
+echo "🔍 Checking kanban status..."
+
+# Check if _kanban.md exists
+if [ ! -f "_kanban.md" ]; then
+    echo "❌ ERROR: No _kanban.md found!"
+    echo ""
+    echo "Create a kanban board before committing:"
+    echo "  cp example_kanban.md _kanban.md"
+    echo ""
+    exit 1
+fi
+
+# Check if kanban has been synced
+if [ ! -f ".kanban.json" ]; then
+    echo "⚠️  WARNING: Kanban has never been synced to GitHub"
+    echo ""
+    echo "Sync before committing:"
+    echo "  kanban-sync _kanban.md"
+    echo ""
+    read -p "Commit anyway? (y/N): " answer
+    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
+        exit 1
+    fi
+fi
+
+# Check if kanban has unsaved changes (modified more recently than state file)
+if [ "_kanban.md" -nt ".kanban.json" ]; then
+    echo "⚠️  WARNING: Kanban has unsaved changes!"
+    echo ""
+    echo "_kanban.md was modified after last sync."
+    echo "Sync before committing:"
+    echo "  kanban-sync _kanban.md"
+    echo ""
+    read -p "Commit anyway? (y/N): " answer
+    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
+        exit 1
+    fi
+fi
+
+echo "✓ Kanban check passed"
+exit 0

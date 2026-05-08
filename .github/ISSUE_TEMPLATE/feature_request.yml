@@ -1,0 +1,98 @@
+name: Feature Request
+description: Suggest a new feature or enhancement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please provide details below to help us understand your request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Use Case
+      description: What problem would this feature solve? What's your use case?
+      placeholder: My team uses Priority fields in addition to Status, and I need to sync both...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you like this feature to work?
+      placeholder: |
+        Add configuration to .env file:
+        GITHUB_FIELD_MAPPINGS=Status:DOING->InProgress,Priority:HIGH->P0
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches have you considered?
+      placeholder: Creating separate kanban files per field (but this would be too complex)
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples
+      description: Provide examples of how this would be used (code, commands, workflows)
+      placeholder: |
+        ## Priority Mapping Example
+        
+        ```markdown
+        ## TODO - HIGH
+        *   [ ] Critical bug fix
+        
+        ## TODO - LOW  
+        *   [ ] Nice to have feature
+        ```
+      render: markdown
+
+  - type: dropdown
+    id: impact
+    attributes:
+      label: Who Would Benefit?
+      description: Who would find this feature useful?
+      options:
+        - Just me
+        - Small teams (2-5 people)
+        - Large teams (5+ people)
+        - All users
+        - Enterprise users
+        - Open source projects
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: compatibility
+    attributes:
+      label: Compatibility
+      description: Would this feature affect existing functionality?
+      options:
+        - label: This feature would be backwards compatible
+        - label: This feature would require breaking changes
+        - label: I'm not sure about compatibility
+
+  - type: textarea
+    id: drawbacks
+    attributes:
+      label: Potential Drawbacks
+      description: Are there any potential downsides to this feature?
+      placeholder: Might make setup more complex for new users
+
+  - type: checkboxes
+    id: willingness
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to implement this feature and submit a PR
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information (links, screenshots, references)

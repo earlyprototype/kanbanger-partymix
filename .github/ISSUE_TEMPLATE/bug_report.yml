@@ -1,0 +1,112 @@
+name: Bug Report
+description: Report a bug or unexpected behaviour
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the information below to help us fix it.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of what the bug is
+      placeholder: When I sync my kanban, tasks are duplicated...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Exact steps to trigger the bug
+      placeholder: |
+        1. Create _kanban.md with 3 tasks
+        2. Run kanban-sync _kanban.md
+        3. Delete .kanban.json
+        4. Run kanban-sync _kanban.md again
+        5. Check GitHub Project
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behaviour
+      description: What should happen?
+      placeholder: Tasks should not be duplicated
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behaviour
+      description: What actually happens?
+      placeholder: Each task appears twice on the GitHub Project board
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python Version
+      description: Output of `python --version`
+      placeholder: "Python 3.12.0"
+    validations:
+      required: true
+
+  - type: input
+    id: kanbanger-version
+    attributes:
+      label: Kanbanger Version
+      description: Version number or commit hash
+      placeholder: "v2.0.0 or commit abc123"
+    validations:
+      required: true
+
+  - type: textarea
+    id: kanban-structure
+    attributes:
+      label: Kanban File Structure (anonymised)
+      description: Show the structure of your _kanban.md (anonymise task titles if needed)
+      placeholder: |
+        ## TODO
+        *   [ ] Task 1
+        *   [ ] Task 2
+        
+        ## DOING
+        *   [ ] Task 3
+      render: markdown
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Error Output
+      description: Full error message and stack trace
+      placeholder: Paste the complete error output here
+      render: shell
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information that might help (screenshots, logs, etc.)
