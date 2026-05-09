@@ -12,7 +12,7 @@ import threading
 from typing import Optional
 from mcp_use.server import MCPServer
 
-from .io import atomic_write_text
+from .io import atomic_write_text, kanban_lock
 
 
 def get_workspace() -> str:
@@ -54,36 +54,38 @@ def register_tools(server: MCPServer):
         if column not in valid_columns:
             return f"Error: Invalid column '{column}'. Must be one of: {', '.join(valid_columns)}"
         
-        # Read current board
-        try:
-            with open(kanban_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception as e:
-            return f"Error reading kanban board: {str(e)}"
-        
-        # Find column section
-        column_header = f"## {column}"
-        if column_header not in content:
-            return f"Error: Column '{column}' not found in kanban board"
-        
-        # Build task line
-        task_line = f"*   [ ] {title}"
-        if description:
-            task_line += f" - {description}"
-        
-        # Insert after column header
-        lines = content.split('\n')
-        for i, line in enumerate(lines):
-            if line.strip() == column_header:
-                lines.insert(i + 1, task_line)
-                break
-        
-        # R1: atomic markdown write (temp + fsync + os.replace).
-        try:
-            atomic_write_text(kanban_path, '\n'.join(lines))
-        except Exception as e:
-            return f"Error writing kanban board: {str(e)}"
-        
+        # R2: serialize mutations cross-process so concurrent writers can't lost-update.
+        with kanban_lock(get_workspace()):
+            # Read current board
+            try:
+                with open(kanban_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception as e:
+                return f"Error reading kanban board: {str(e)}"
+
+            # Find column section
+            column_header = f"## {column}"
+            if column_header not in content:
+                return f"Error: Column '{column}' not found in kanban board"
+
+            # Build task line
+            task_line = f"*   [ ] {title}"
+            if description:
+                task_line += f" - {description}"
+
+            # Insert after column header
+            lines = content.split('\n')
+            for i, line in enumerate(lines):
+                if line.strip() == column_header:
+                    lines.insert(i + 1, task_line)
+                    break
+
+            # R1: atomic markdown write (temp + fsync + os.replace).
+            try:
+                atomic_write_text(kanban_path, '\n'.join(lines))
+            except Exception as e:
+                return f"Error writing kanban board: {str(e)}"
+
         return f"Successfully added task '{title}' to {column}"
     
     @server.tool()
@@ -119,55 +121,57 @@ def register_tools(server: MCPServer):
         if to_column not in valid_columns:
             return f"Error: Invalid to_column '{to_column}'"
         
-        try:
-            with open(kanban_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception as e:
-            return f"Error reading kanban board: {str(e)}"
-        
-        lines = content.split('\n')
-        
-        # Find the task in from_column
-        task_line = None
-        task_index = None
-        in_from_column = False
-        
-        for i, line in enumerate(lines):
-            if line.strip() == f"## {from_column}":
-                in_from_column = True
-                continue
-            elif line.strip().startswith("## ") and in_from_column:
-                break  # Entered next column
-            
-            if in_from_column and title in line and line.strip().startswith("*"):
-                task_line = line
-                task_index = i
-                break
-        
-        if task_line is None:
-            return f"Error: Task '{title}' not found in {from_column}"
-        
-        # Remove from source column
-        lines.pop(task_index)
-        
-        # Update checkbox based on destination
-        if to_column == "DONE":
-            task_line = task_line.replace("[ ]", "[x]")
-        else:
-            task_line = task_line.replace("[x]", "[ ]")
-        
-        # Find destination column and insert
-        for i, line in enumerate(lines):
-            if line.strip() == f"## {to_column}":
-                lines.insert(i + 1, task_line)
-                break
-        
-        # R1: atomic markdown write (temp + fsync + os.replace).
-        try:
-            atomic_write_text(kanban_path, '\n'.join(lines))
-        except Exception as e:
-            return f"Error writing kanban board: {str(e)}"
-        
+        # R2: serialize mutations cross-process so concurrent writers can't lost-update.
+        with kanban_lock(get_workspace()):
+            try:
+                with open(kanban_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception as e:
+                return f"Error reading kanban board: {str(e)}"
+
+            lines = content.split('\n')
+
+            # Find the task in from_column
+            task_line = None
+            task_index = None
+            in_from_column = False
+
+            for i, line in enumerate(lines):
+                if line.strip() == f"## {from_column}":
+                    in_from_column = True
+                    continue
+                elif line.strip().startswith("## ") and in_from_column:
+                    break  # Entered next column
+
+                if in_from_column and title in line and line.strip().startswith("*"):
+                    task_line = line
+                    task_index = i
+                    break
+
+            if task_line is None:
+                return f"Error: Task '{title}' not found in {from_column}"
+
+            # Remove from source column
+            lines.pop(task_index)
+
+            # Update checkbox based on destination
+            if to_column == "DONE":
+                task_line = task_line.replace("[ ]", "[x]")
+            else:
+                task_line = task_line.replace("[x]", "[ ]")
+
+            # Find destination column and insert
+            for i, line in enumerate(lines):
+                if line.strip() == f"## {to_column}":
+                    lines.insert(i + 1, task_line)
+                    break
+
+            # R1: atomic markdown write (temp + fsync + os.replace).
+            try:
+                atomic_write_text(kanban_path, '\n'.join(lines))
+            except Exception as e:
+                return f"Error writing kanban board: {str(e)}"
+
         return f"Successfully moved '{title}' from {from_column} to {to_column}"
     
     @server.tool()
@@ -194,39 +198,41 @@ def register_tools(server: MCPServer):
         if not os.path.exists(kanban_path):
             return f"Error: Kanban board not found at {kanban_path}"
         
-        try:
-            with open(kanban_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception as e:
-            return f"Error reading kanban board: {str(e)}"
-        
-        lines = content.split('\n')
-        
-        # Find and remove the task
-        task_found = False
-        in_column = False
-        
-        for i, line in enumerate(lines):
-            if line.strip() == f"## {column}":
-                in_column = True
-                continue
-            elif line.strip().startswith("## ") and in_column:
-                break
-            
-            if in_column and title in line and line.strip().startswith("*"):
-                lines.pop(i)
-                task_found = True
-                break
-        
-        if not task_found:
-            return f"Error: Task '{title}' not found in {column}"
-        
-        # R1: atomic markdown write (temp + fsync + os.replace).
-        try:
-            atomic_write_text(kanban_path, '\n'.join(lines))
-        except Exception as e:
-            return f"Error writing kanban board: {str(e)}"
-        
+        # R2: serialize mutations cross-process so concurrent writers can't lost-update.
+        with kanban_lock(get_workspace()):
+            try:
+                with open(kanban_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception as e:
+                return f"Error reading kanban board: {str(e)}"
+
+            lines = content.split('\n')
+
+            # Find and remove the task
+            task_found = False
+            in_column = False
+
+            for i, line in enumerate(lines):
+                if line.strip() == f"## {column}":
+                    in_column = True
+                    continue
+                elif line.strip().startswith("## ") and in_column:
+                    break
+
+                if in_column and title in line and line.strip().startswith("*"):
+                    lines.pop(i)
+                    task_found = True
+                    break
+
+            if not task_found:
+                return f"Error: Task '{title}' not found in {column}"
+
+            # R1: atomic markdown write (temp + fsync + os.replace).
+            try:
+                atomic_write_text(kanban_path, '\n'.join(lines))
+            except Exception as e:
+                return f"Error writing kanban board: {str(e)}"
+
         return f"Successfully deleted task '{title}' from {column}"
     
     @server.tool()
