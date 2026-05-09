@@ -469,11 +469,11 @@ class Syncer:
 
 
 def main():
-    # Fix console encoding for Windows
+    # Fix console encoding for Windows; 'replace' (R11) so a stray byte cannot raise into the parent's pipe drain.
     if sys.platform == 'win32':
         import codecs
-        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')
-        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')
+        sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'replace')
+        sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'replace')
     
     parser = argparse.ArgumentParser(description='Sync markdown kanban to GitHub Projects')
     parser.add_argument('kanban_file', help='Path to the markdown kanban file')
@@ -524,4 +524,15 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        # R11: flush before exit so the parent sees a clean EOF on its pipes.
+        try:
+            sys.stdout.flush()
+        except Exception:
+            pass
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass

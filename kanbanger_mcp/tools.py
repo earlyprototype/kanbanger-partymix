@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import subprocess
+import threading
 from typing import Optional
 from mcp_use.server import MCPServer
 
@@ -336,27 +337,54 @@ def register_tools(server: MCPServer):
         if dry_run:
             cmd.append("--dry-run")
 
+        def _drain(stream, sink):
+            try:
+                for chunk in iter(stream.readline, ''):
+                    sink.append(chunk)
+            finally:
+                try:
+                    stream.close()
+                except Exception:
+                    pass
+
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            stdin=subprocess.DEVNULL,   # R11: do NOT inherit MCP server's stdin pipe
+            cwd=workspace,
+            text=True,
+            encoding='utf-8',
+            errors='replace',           # R11: tolerate any byte the child writes
+        )
+        t_out = threading.Thread(target=_drain, args=(proc.stdout, stdout_chunks), daemon=True)
+        t_err = threading.Thread(target=_drain, args=(proc.stderr, stderr_chunks), daemon=True)
+        t_out.start()
+        t_err.start()
         try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                cwd=workspace,
-                encoding='utf-8',
-                timeout=TIMEOUT_SEC,
-            )
+            rc = proc.wait(timeout=TIMEOUT_SEC)
         except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+            t_out.join(timeout=2)
+            t_err.join(timeout=2)
             return (
                 f"Error: sync_to_github timed out after {TIMEOUT_SEC}s "
                 f"(set KANBANGER_SYNC_TIMEOUT_SEC to override; "
                 f"check GITHUB_REPO env var and network reachability)"
             )
+        t_out.join(timeout=5)
+        t_err.join(timeout=5)
+        stdout = ''.join(stdout_chunks)
+        stderr = ''.join(stderr_chunks)
 
-        if result.returncode == 0:
+        if rc == 0:
             mode = "preview" if dry_run else "complete"
-            return f"Sync {mode}:\n\n{result.stdout}"
+            return f"Sync {mode}:\n\n{stdout}"
         else:
-            return f"Sync failed:\n\n{result.stderr}"
+            return f"Sync failed:\n\n{stderr}"
     
     @server.tool()
     def get_sync_status() -> str:
