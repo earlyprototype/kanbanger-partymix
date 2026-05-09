@@ -37,6 +37,7 @@ env/
 
 # Kanban state files (local only)
 .kanban.json
+.kanban.lock
 
 # Note: _kanban.md is NOT ignored - commit it to track task history!
 
