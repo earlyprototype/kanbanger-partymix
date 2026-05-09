@@ -477,9 +477,9 @@ def main():
     
     parser = argparse.ArgumentParser(description='Sync markdown kanban to GitHub Projects')
     parser.add_argument('kanban_file', help='Path to the markdown kanban file')
-    parser.add_argument('--repo', help='GitHub repo (owner/name)', default=os.environ.get('GITHUB_REPO'))
-    parser.add_argument('--project', type=int, help='GitHub Project number (optional if only one project linked)', 
-                        default=os.environ.get('GITHUB_PROJECT_NUMBER'))
+    parser.add_argument('--repo', help='GitHub repo (owner/name)', default=os.environ.get('GITHUB_REPO') or None)
+    parser.add_argument('--project', type=int, help='GitHub Project number (optional if only one project linked)',
+                        default=os.environ.get('GITHUB_PROJECT_NUMBER') or None)
     parser.add_argument('--dry-run', action='store_true', help='Parse only, no sync')
     
     args = parser.parse_args()
