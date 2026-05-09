@@ -12,7 +12,7 @@ import threading
 from typing import Optional
 from mcp_use.server import MCPServer
 
-from .io import atomic_write_text, kanban_lock
+from kanban_io import atomic_write_text, kanban_lock
 
 
 def get_workspace() -> str:

@@ -6,7 +6,7 @@ setup(
     description="Sync markdown kanban boards to GitHub Projects with MCP server support",
     author="Fab2",
     packages=find_packages(),
-    py_modules=["sync_kanban", "setup_wizard"],
+    py_modules=["sync_kanban", "setup_wizard", "kanban_io"],
     install_requires=[
         "requests>=2.25.0",
         "python-dotenv>=0.19.0",

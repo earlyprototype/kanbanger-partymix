@@ -11,6 +11,8 @@ import argparse
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from kanban_io import atomic_write_json, kanban_lock
+
 # Load environment variables from .env file if it exists
 try:
     from dotenv import load_dotenv
@@ -99,9 +101,18 @@ class StateManager:
         return self.state
     
     def save(self):
-        """Save state to .kanban.json."""
-        with open(self.state_file, 'w', encoding='utf-8') as f:
-            json.dump(self.state, f, indent=2)
+        """Save state to .kanban.json. D1: atomic write under cross-process lock.
+
+        Atomic write (R1 pattern via kanban_io.atomic_write_json) protects
+        against torn state files; the workspace-relative lock (R2 pattern via
+        kanban_io.kanban_lock) serializes against tools.py mutations and any
+        concurrent sync writer. Together they form D1's transactional pair —
+        both kanban_io.atomic_write_text (markdown, in tools.py) and
+        atomic_write_json (state, here) write under the same lock file.
+        """
+        workspace = str(self.kanban_file.parent)
+        with kanban_lock(workspace):
+            atomic_write_json(str(self.state_file), self.state)
     
     def get_item_id(self, task_title: str) -> Optional[str]:
         """Get the GitHub item ID for a task title."""
