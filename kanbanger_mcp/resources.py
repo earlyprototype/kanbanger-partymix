@@ -141,16 +141,41 @@ def register_resources(server: MCPServer):
         mime_type="application/json"
     )
     def get_config() -> str:
-        """Return current configuration (without exposing secrets)."""
+        """Return current configuration (without exposing secrets).
+
+        O3: every value below is computed at call time, never cached
+        from import. For the GitHub vars we additionally consult the
+        workspace `.env` so the reported config matches what the next
+        `sync_kanban` subprocess would actually see — the MCP server
+        process doesn't `load_dotenv()` itself, so its inherited env
+        and the subprocess's resolved env can diverge. Subprocess
+        precedence is os.environ-then-.env (sync_kanban calls
+        load_dotenv() with default override=False); we mirror that.
+        """
+        env_path = os.path.join(get_workspace(), ".env")
+        # Read .env into a local dict at call time WITHOUT mutating
+        # os.environ (avoids surprising side effects on the running
+        # MCP process). Tolerate missing python-dotenv gracefully.
+        try:
+            from dotenv import dotenv_values
+            dotenv_overlay = dotenv_values(env_path) if os.path.exists(env_path) else {}
+        except ImportError:
+            dotenv_overlay = {}
+
+        def _runtime_value(name: str, default: str) -> str:
+            return os.getenv(name) or dotenv_overlay.get(name) or default
+
+        token_present = bool(os.getenv("GITHUB_TOKEN") or dotenv_overlay.get("GITHUB_TOKEN"))
+
         config = {
             "workspace": get_workspace(),
             "kanban_file": get_kanban_path(),
             "kanban_exists": os.path.exists(get_kanban_path()),
-            "github_token_set": bool(os.getenv("GITHUB_TOKEN")),
-            "github_repo": os.getenv("GITHUB_REPO", "not set"),
-            "github_project_number": os.getenv("GITHUB_PROJECT_NUMBER", "auto-detect"),
-            "env_file": os.path.join(get_workspace(), ".env"),
-            "env_file_exists": os.path.exists(os.path.join(get_workspace(), ".env"))
+            "github_token_set": token_present,
+            "github_repo": _runtime_value("GITHUB_REPO", "not set"),
+            "github_project_number": _runtime_value("GITHUB_PROJECT_NUMBER", "auto-detect"),
+            "env_file": env_path,
+            "env_file_exists": os.path.exists(env_path),
         }
-        
+
         return json.dumps(config, indent=2)
