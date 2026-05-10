@@ -10,6 +10,7 @@ import json
 import difflib
 import subprocess
 import threading
+from pathlib import Path
 from typing import Optional
 from mcp_use.server import MCPServer
 
@@ -38,8 +39,13 @@ def _parse_task_title(line: str) -> Optional[str]:
 
 
 def get_workspace() -> str:
-    """Get the current workspace directory."""
-    return os.getenv("KANBANGER_WORKSPACE", os.getcwd())
+    """Get the current workspace directory.
+
+    S2: returns an absolute canonical path. `Path.resolve()` collapses
+    `..` segments and symlinks so a `KANBANGER_WORKSPACE=../foo` env
+    var resolves predictably regardless of the process cwd.
+    """
+    return str(Path(os.getenv("KANBANGER_WORKSPACE", os.getcwd())).resolve())
 
 
 def get_kanban_path() -> str:

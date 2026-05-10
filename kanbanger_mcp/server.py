@@ -8,6 +8,7 @@ for LLM-assisted kanban management.
 import os
 import sys
 import argparse
+from pathlib import Path
 from mcp_use.server import MCPServer
 
 from .tools import register_tools
@@ -89,7 +90,9 @@ def main():
     args = parser.parse_args()
     
     # Validate workspace
-    workspace = os.getenv("KANBANGER_WORKSPACE", os.getcwd())
+    # S2: resolve to absolute canonical path so `..` segments and
+    # symlinks collapse predictably regardless of the process cwd.
+    workspace = str(Path(os.getenv("KANBANGER_WORKSPACE", os.getcwd())).resolve())
     kanban_path = os.path.join(workspace, "_kanban.md")
     
     if not os.path.exists(kanban_path):

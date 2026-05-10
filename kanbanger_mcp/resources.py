@@ -6,12 +6,18 @@ Read-only data that LLMs can access for context and awareness.
 
 import os
 import json
+from pathlib import Path
 from mcp_use.server import MCPServer
 
 
 def get_workspace() -> str:
-    """Get the current workspace directory."""
-    return os.getenv("KANBANGER_WORKSPACE", os.getcwd())
+    """Get the current workspace directory.
+
+    S2: returns an absolute canonical path. `Path.resolve()` collapses
+    `..` segments and symlinks so a `KANBANGER_WORKSPACE=../foo` env
+    var resolves predictably regardless of the process cwd.
+    """
+    return str(Path(os.getenv("KANBANGER_WORKSPACE", os.getcwd())).resolve())
 
 
 def get_kanban_path() -> str:
