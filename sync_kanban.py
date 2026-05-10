@@ -24,6 +24,12 @@ except ImportError:
 # GitHub GraphQL endpoint
 GITHUB_API = "https://api.github.com/graphql"
 
+# R8: state file schema version. Persisted in .kanban.json so future
+# kanbanger versions can detect and migrate older state shapes.
+# v0 = pre-R8 (no field present); v1 = current. v0 and v1 are
+# structurally identical, so v0 files self-upgrade on next save.
+SCHEMA_VERSION = 1
+
 
 class LocalBoard:
     """Handles parsing of markdown kanban files."""
@@ -88,16 +94,31 @@ class StateManager:
         self.kanban_file = Path(kanban_file_path)
         self.state_file = self.kanban_file.parent / ".kanban.json"
         self.state = {
+            "schema_version": SCHEMA_VERSION,
             "repo_node_id": None,
             "project_id": None,
             "tasks": {}
         }
-    
+
     def load(self) -> Dict:
         """Load state from .kanban.json if it exists."""
         if self.state_file.exists():
             with open(self.state_file, 'r', encoding='utf-8') as f:
                 self.state = json.load(f)
+            # R8: backwards-compat. Pre-R8 state files have no
+            # schema_version; v0 and v1 are structurally identical, so
+            # silently upgrade in-memory (next save persists the field).
+            loaded_version = self.state.get("schema_version")
+            if loaded_version is None:
+                self.state["schema_version"] = SCHEMA_VERSION
+            elif loaded_version > SCHEMA_VERSION:
+                print(
+                    f"Warning: .kanban.json schema_version={loaded_version} "
+                    f"is newer than this kanbanger version "
+                    f"(supports v{SCHEMA_VERSION}). Reading what is "
+                    f"recognised; unknown fields are preserved on save.",
+                    file=sys.stderr,
+                )
         return self.state
     
     def save(self):
