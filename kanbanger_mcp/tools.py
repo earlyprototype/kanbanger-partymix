@@ -24,6 +24,76 @@ from kanban_io import atomic_write_text, kanban_lock
 _TASK_LINE_PREFIX_RE = re.compile(r"^\*\s+\[")
 TITLE_MAX_LEN = 500
 
+# E2: stable snake_case error codes for structured MCP tool error
+# returns. Stable identifiers let clients branch on failure category
+# without parsing free-text messages. New codes are append-only.
+ERROR_KANBAN_NOT_FOUND = "kanban_not_found"
+ERROR_INVALID_COLUMN = "invalid_column"
+ERROR_COLUMN_NOT_IN_BOARD = "column_not_in_board"
+ERROR_INVALID_TITLE = "invalid_title"
+ERROR_TASK_NOT_FOUND = "task_not_found"
+ERROR_READ_FAILED = "read_failed"
+ERROR_WRITE_FAILED = "write_failed"
+ERROR_MISSING_GITHUB_TOKEN = "missing_github_token"
+ERROR_MISSING_GITHUB_REPO = "missing_github_repo"
+ERROR_SYNC_SUBPROCESS_FAILED = "sync_subprocess_failed"
+ERROR_SYNC_TIMEOUT = "sync_timeout"
+ERROR_GITHUB_API = "github_api_error"
+ERROR_PROJECT_NOT_FOUND = "project_not_found"
+ERROR_CONFIGURATION = "configuration_error"
+
+
+def _error(code: str, message: str, **context) -> str:
+    """E2: render a structured MCP error return as JSON.
+
+    Shape: {"success": False, "error_code": code, "message": message,
+    "context": {...optional recovery-aiding fields}}. Only error paths
+    use this shape; success returns keep their existing shape to
+    minimise client churn.
+    """
+    payload = {
+        "success": False,
+        "error_code": code,
+        "message": message,
+    }
+    if context:
+        payload["context"] = context
+    return json.dumps(payload, indent=2)
+
+
+def _classify_sync_stderr(stderr: str) -> str:
+    """E2: map sync_kanban subprocess stderr to a structured error_code.
+
+    The subprocess raises typed exceptions from E1 and the CLI wrapper
+    formats them as 'Error: <message>' on stderr. This mirror table
+    avoids clients parsing free-text. Append-only: add a new branch
+    for any new E1 exception class introduced in sync_kanban.
+    """
+    if not stderr:
+        return ERROR_SYNC_SUBPROCESS_FAILED
+    # Inspect each error line; first match wins.
+    for line in stderr.splitlines():
+        line = line.strip()
+        if not line.startswith("Error:"):
+            continue
+        body = line[len("Error:"):].strip()
+        if "GITHUB_TOKEN" in body:
+            return ERROR_MISSING_GITHUB_TOKEN
+        if "GITHUB_REPO" in body or "--repo" in body:
+            return ERROR_MISSING_GITHUB_REPO
+        if body.startswith("File not found"):
+            return ERROR_KANBAN_NOT_FOUND
+        if "GitHub API returned status" in body or body.startswith("GraphQL errors"):
+            return ERROR_GITHUB_API
+        if "No projects found" in body or "Project #" in body:
+            return ERROR_PROJECT_NOT_FOUND
+        if body.startswith("requests not installed"):
+            return ERROR_CONFIGURATION
+        if "No 'Status' field" in body:
+            return ERROR_GITHUB_API
+        return ERROR_CONFIGURATION  # generic Error: line we don't recognise
+    return ERROR_SYNC_SUBPROCESS_FAILED
+
 
 def _parse_task_title(line: str) -> Optional[str]:
     """Extract the title portion of a markdown task line, or None.
@@ -67,6 +137,7 @@ def validate_task_title(title: str) -> Tuple[bool, Optional[str]]:
     S6: pure validator (no normalization, no I/O) so callers can reuse
     it for E2's structured-error refactor and for future per-field
     validators. Rejects:
+      - empty / whitespace-only titles
       - newlines (would split a task across markdown lines)
       - leading '## ' (would be parsed as a new column header)
       - leading '* [' patterns (would be parsed as a new task line)
@@ -74,6 +145,8 @@ def validate_task_title(title: str) -> Tuple[bool, Optional[str]]:
     Caller is responsible for tab-to-space normalization before
     validation if desired.
     """
+    if not title or not title.strip():
+        return False, "title is empty"
     if "\n" in title:
         return False, "title contains a newline character"
     if title.startswith("## "):
@@ -131,21 +204,30 @@ def register_tools(server: MCPServer):
         kanban_path = get_kanban_path()
 
         if not os.path.exists(kanban_path):
-            return f"Error: Kanban board not found at {kanban_path}"
+            return _error(
+                ERROR_KANBAN_NOT_FOUND,
+                f"Kanban board not found at {kanban_path}",
+                kanban_path=kanban_path,
+            )
 
         # Validate column
         valid_columns = ["BACKLOG", "TODO", "DOING", "DONE"]
         if column not in valid_columns:
-            return f"Error: Invalid column '{column}'. Must be one of: {', '.join(valid_columns)}"
+            return _error(
+                ERROR_INVALID_COLUMN,
+                f"Invalid column '{column}'. Must be one of: {', '.join(valid_columns)}",
+                column=column,
+                valid_columns=valid_columns,
+            )
 
         # S6: normalize tabs to spaces before validation so a tab-only
         # title isn't accepted as 'non-empty' but also isn't rejected
-        # for containing a tab. Validation rejects markdown-injecting
-        # titles (newline, '## ', '* [') and over-long titles.
+        # for containing a tab. Validation rejects empty, markdown-
+        # injecting, and over-long titles.
         title = title.replace("\t", " ")
         ok, err = validate_task_title(title)
         if not ok:
-            return f"Error: {err}"
+            return _error(ERROR_INVALID_TITLE, err)
 
         # R2: serialize mutations cross-process so concurrent writers can't lost-update.
         with kanban_lock(get_workspace()):
@@ -154,12 +236,19 @@ def register_tools(server: MCPServer):
                 with open(kanban_path, 'r', encoding='utf-8') as f:
                     content = f.read()
             except Exception as e:
-                return f"Error reading kanban board: {str(e)}"
+                return _error(
+                    ERROR_READ_FAILED,
+                    f"Error reading kanban board: {str(e)}",
+                )
 
             # Find column section
             column_header = f"## {column}"
             if column_header not in content:
-                return f"Error: Column '{column}' not found in kanban board"
+                return _error(
+                    ERROR_COLUMN_NOT_IN_BOARD,
+                    f"Column '{column}' not found in kanban board",
+                    column=column,
+                )
 
             # Build task line
             task_line = f"*   [ ] {title}"
@@ -177,7 +266,10 @@ def register_tools(server: MCPServer):
             try:
                 atomic_write_text(kanban_path, '\n'.join(lines))
             except Exception as e:
-                return f"Error writing kanban board: {str(e)}"
+                return _error(
+                    ERROR_WRITE_FAILED,
+                    f"Error writing kanban board: {str(e)}",
+                )
 
         return f"Successfully added task '{title}' to {column}"
     
@@ -203,24 +295,41 @@ def register_tools(server: MCPServer):
             - Moving from DONE back unchecks the task [ ]
         """
         kanban_path = get_kanban_path()
-        
+
         if not os.path.exists(kanban_path):
-            return f"Error: Kanban board not found at {kanban_path}"
-        
+            return _error(
+                ERROR_KANBAN_NOT_FOUND,
+                f"Kanban board not found at {kanban_path}",
+                kanban_path=kanban_path,
+            )
+
         # Validate columns
         valid_columns = ["BACKLOG", "TODO", "DOING", "DONE"]
         if from_column not in valid_columns:
-            return f"Error: Invalid from_column '{from_column}'"
+            return _error(
+                ERROR_INVALID_COLUMN,
+                f"Invalid from_column '{from_column}'",
+                column=from_column,
+                valid_columns=valid_columns,
+            )
         if to_column not in valid_columns:
-            return f"Error: Invalid to_column '{to_column}'"
-        
+            return _error(
+                ERROR_INVALID_COLUMN,
+                f"Invalid to_column '{to_column}'",
+                column=to_column,
+                valid_columns=valid_columns,
+            )
+
         # R2: serialize mutations cross-process so concurrent writers can't lost-update.
         with kanban_lock(get_workspace()):
             try:
                 with open(kanban_path, 'r', encoding='utf-8') as f:
                     content = f.read()
             except Exception as e:
-                return f"Error reading kanban board: {str(e)}"
+                return _error(
+                    ERROR_READ_FAILED,
+                    f"Error reading kanban board: {str(e)}",
+                )
 
             lines = content.split('\n')
 
@@ -252,9 +361,22 @@ def register_tools(server: MCPServer):
                 suggestions = difflib.get_close_matches(title, seen_titles, n=3, cutoff=0.6)
                 if suggestions:
                     hint = ", ".join(repr(s) for s in suggestions)
-                    return (f"Error: Task '{title}' not found in {from_column}. "
-                            f"Did you mean: {hint}?")
-                return f"Error: Task '{title}' not found in {from_column}"
+                    return _error(
+                        ERROR_TASK_NOT_FOUND,
+                        f"Task '{title}' not found in {from_column}. "
+                        f"Did you mean: {hint}?",
+                        title=title,
+                        column=from_column,
+                        available_titles=seen_titles,
+                        suggestions=suggestions,
+                    )
+                return _error(
+                    ERROR_TASK_NOT_FOUND,
+                    f"Task '{title}' not found in {from_column}",
+                    title=title,
+                    column=from_column,
+                    available_titles=seen_titles,
+                )
 
             # Remove from source column
             lines.pop(task_index)
@@ -275,7 +397,10 @@ def register_tools(server: MCPServer):
             try:
                 atomic_write_text(kanban_path, '\n'.join(lines))
             except Exception as e:
-                return f"Error writing kanban board: {str(e)}"
+                return _error(
+                    ERROR_WRITE_FAILED,
+                    f"Error writing kanban board: {str(e)}",
+                )
 
         return f"Successfully moved '{title}' from {from_column} to {to_column}"
     
@@ -299,17 +424,24 @@ def register_tools(server: MCPServer):
             Consider moving to DONE instead of deleting for record keeping.
         """
         kanban_path = get_kanban_path()
-        
+
         if not os.path.exists(kanban_path):
-            return f"Error: Kanban board not found at {kanban_path}"
-        
+            return _error(
+                ERROR_KANBAN_NOT_FOUND,
+                f"Kanban board not found at {kanban_path}",
+                kanban_path=kanban_path,
+            )
+
         # R2: serialize mutations cross-process so concurrent writers can't lost-update.
         with kanban_lock(get_workspace()):
             try:
                 with open(kanban_path, 'r', encoding='utf-8') as f:
                     content = f.read()
             except Exception as e:
-                return f"Error reading kanban board: {str(e)}"
+                return _error(
+                    ERROR_READ_FAILED,
+                    f"Error reading kanban board: {str(e)}",
+                )
 
             lines = content.split('\n')
 
@@ -339,9 +471,22 @@ def register_tools(server: MCPServer):
                 suggestions = difflib.get_close_matches(title, seen_titles, n=3, cutoff=0.6)
                 if suggestions:
                     hint = ", ".join(repr(s) for s in suggestions)
-                    return (f"Error: Task '{title}' not found in {column}. "
-                            f"Did you mean: {hint}?")
-                return f"Error: Task '{title}' not found in {column}"
+                    return _error(
+                        ERROR_TASK_NOT_FOUND,
+                        f"Task '{title}' not found in {column}. "
+                        f"Did you mean: {hint}?",
+                        title=title,
+                        column=column,
+                        available_titles=seen_titles,
+                        suggestions=suggestions,
+                    )
+                return _error(
+                    ERROR_TASK_NOT_FOUND,
+                    f"Task '{title}' not found in {column}",
+                    title=title,
+                    column=column,
+                    available_titles=seen_titles,
+                )
 
             lines.pop(task_index)
 
@@ -349,7 +494,10 @@ def register_tools(server: MCPServer):
             try:
                 atomic_write_text(kanban_path, '\n'.join(lines))
             except Exception as e:
-                return f"Error writing kanban board: {str(e)}"
+                return _error(
+                    ERROR_WRITE_FAILED,
+                    f"Error writing kanban board: {str(e)}",
+                )
 
         return f"Successfully deleted task '{title}' from {column}"
     
@@ -383,13 +531,20 @@ def register_tools(server: MCPServer):
         kanban_path = get_kanban_path()
 
         if not os.path.exists(kanban_path):
-            return json.dumps({"error": f"Kanban board not found at {kanban_path}"})
+            return _error(
+                ERROR_KANBAN_NOT_FOUND,
+                f"Kanban board not found at {kanban_path}",
+                kanban_path=kanban_path,
+            )
 
         try:
             with open(kanban_path, 'r', encoding='utf-8') as f:
                 content = f.read()
         except Exception as e:
-            return json.dumps({"error": f"Error reading kanban board: {str(e)}"})
+            return _error(
+                ERROR_READ_FAILED,
+                f"Error reading kanban board: {str(e)}",
+            )
 
         lines = content.split('\n')
         tasks: dict = {}
@@ -460,15 +615,25 @@ def register_tools(server: MCPServer):
         """
         workspace = get_workspace()
         kanban_path = get_kanban_path()
-        
+
         if not os.path.exists(kanban_path):
-            return f"Error: Kanban board not found at {kanban_path}"
-        
+            return _error(
+                ERROR_KANBAN_NOT_FOUND,
+                f"Kanban board not found at {kanban_path}",
+                kanban_path=kanban_path,
+            )
+
         # Check for required environment variables
         if not os.getenv("GITHUB_TOKEN"):
-            return "Error: GITHUB_TOKEN environment variable not set"
+            return _error(
+                ERROR_MISSING_GITHUB_TOKEN,
+                "GITHUB_TOKEN environment variable not set",
+            )
         if not os.getenv("GITHUB_REPO"):
-            return "Error: GITHUB_REPO environment variable not set"
+            return _error(
+                ERROR_MISSING_GITHUB_REPO,
+                "GITHUB_REPO environment variable not set",
+            )
         
         TIMEOUT_SEC = int(os.getenv("KANBANGER_SYNC_TIMEOUT_SEC", "60"))
 
@@ -511,10 +676,12 @@ def register_tools(server: MCPServer):
             proc.wait()
             t_out.join(timeout=2)
             t_err.join(timeout=2)
-            return (
-                f"Error: sync_to_github timed out after {TIMEOUT_SEC}s "
-                f"(set KANBANGER_SYNC_TIMEOUT_SEC to override; "
-                f"check GITHUB_REPO env var and network reachability)"
+            return _error(
+                ERROR_SYNC_TIMEOUT,
+                f"sync_to_github timed out after {TIMEOUT_SEC}s "
+                f"(set KANBANGER_SYNC_TIMEOUT_SEC to override; check "
+                f"GITHUB_REPO env var and network reachability)",
+                timeout_sec=TIMEOUT_SEC,
             )
         t_out.join(timeout=5)
         t_err.join(timeout=5)
@@ -524,8 +691,18 @@ def register_tools(server: MCPServer):
         if rc == 0:
             mode = "preview" if dry_run else "complete"
             return f"Sync {mode}:\n\n{stdout}"
-        else:
-            return f"Sync failed:\n\n{stderr}"
+
+        # E2: subprocess failed. Translate the E1-prefixed stderr
+        # ("Error: <msg>") back to a structured code so callers don't
+        # parse free-text. Falls back to ERROR_SYNC_SUBPROCESS_FAILED
+        # for unrecognised messages; full stderr always in context.
+        return _error(
+            _classify_sync_stderr(stderr),
+            f"sync_to_github subprocess exited with code {rc}",
+            return_code=rc,
+            stderr=stderr,
+            stdout=stdout,
+        )
     
     @server.tool()
     def get_sync_status() -> str:
