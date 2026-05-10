@@ -39,17 +39,24 @@ class LocalBoard:
         self.tasks: Dict[str, List[Dict]] = {}
     
     def parse(self) -> Dict[str, List[Dict]]:
-        """Parse a markdown kanban file and return tasks by column."""
+        """Parse a markdown kanban file and return tasks by column.
+
+        D4: same-title rows in the same section are deduped (first
+        occurrence wins) with a stderr warning. Without dedup the
+        sync path would create duplicate GitHub items for what looks
+        like one logical task to the user.
+        """
         with open(self.file_path, 'r', encoding='utf-8') as f:
             content = f.read()
-        
+
         tasks = {}
+        seen_per_section: Dict[str, set] = {}
         current_section = None
-        
+
         # Detect section headers (## N. TITLE or ## TITLE)
         section_pattern = re.compile(r'^##\s+(?:\d+\.\s+)?(.+)', re.IGNORECASE)
         task_pattern = re.compile(r'^\*\s+\[([ xX])\]\s+(.+)')
-        
+
         for line in content.split('\n'):
             # Check for section header
             section_match = section_pattern.match(line.strip())
@@ -67,22 +74,32 @@ class LocalBoard:
                     current_section = 'Done'
                 else:
                     current_section = section_name
-                
-                if current_section not in tasks:
-                    tasks[current_section] = []
+
+                tasks.setdefault(current_section, [])
+                seen_per_section.setdefault(current_section, set())
                 continue
-            
+
             # Check for task item
             if current_section:
                 task_match = task_pattern.match(line.strip())
                 if task_match:
                     is_done = task_match.group(1).lower() == 'x'
                     title = task_match.group(2).strip()
+                    if title in seen_per_section[current_section]:
+                        print(
+                            f"Warning: duplicate task title in section "
+                            f"'{current_section}': '{title}'. Keeping first "
+                            f"occurrence; dropping subsequent duplicate to "
+                            f"prevent duplicate GitHub items on sync.",
+                            file=sys.stderr,
+                        )
+                        continue
+                    seen_per_section[current_section].add(title)
                     tasks[current_section].append({
                         'title': title,
                         'done': is_done
                     })
-        
+
         self.tasks = tasks
         return tasks
 

@@ -343,17 +343,31 @@ def register_tools(server: MCPServer):
 
         lines = content.split('\n')
         tasks: dict = {}
+        # D4: per-column set of titles already added on this parse,
+        # used to detect and dedupe same-title rows. Audit recommends
+        # dedupe over keep-both because the sync path otherwise creates
+        # duplicate GitHub items. First occurrence wins.
+        seen_per_column: dict = {}
         current_column = None
 
         for line in lines:
             if line.strip().startswith("## "):
                 current_column = line.strip()[3:].strip()
-                if current_column not in tasks:
-                    tasks[current_column] = []
+                tasks.setdefault(current_column, [])
+                seen_per_column.setdefault(current_column, set())
             elif current_column:
                 parsed = _parse_task_title_with_description(line)
                 if parsed is not None:
                     title, description = parsed
+                    if title in seen_per_column[current_column]:
+                        print(
+                            f"Warning: duplicate task title in column "
+                            f"'{current_column}': '{title}'. Keeping first "
+                            f"occurrence; dropping subsequent duplicate.",
+                            file=sys.stderr,
+                        )
+                        continue
+                    seen_per_column[current_column].add(title)
                     if verbose:
                         tasks[current_column].append(
                             {"title": title, "description": description}
