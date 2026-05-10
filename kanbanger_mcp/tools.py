@@ -11,7 +11,7 @@ import difflib
 import subprocess
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 from mcp_use.server import MCPServer
 
 from kanban_io import atomic_write_text, kanban_lock
@@ -27,6 +27,20 @@ def _parse_task_title(line: str) -> Optional[str]:
     R5: this is the canonical title extraction used by move_task /
     delete_task for exact-equality comparison and near-match suggestions.
     """
+    parsed = _parse_task_title_with_description(line)
+    return parsed[0] if parsed is not None else None
+
+
+def _parse_task_title_with_description(
+    line: str,
+) -> Optional[Tuple[str, Optional[str]]]:
+    """Extract `(title, description_or_None)` from a markdown task line.
+
+    D3: shared parser used by both `_parse_task_title` (titles only,
+    R5 path) and `list_tasks(verbose=True)` (titles + descriptions).
+    Description is whatever follows the FIRST ` - ` on the line; None
+    if no separator. Returns None for non-task lines.
+    """
     stripped = line.strip()
     if not stripped.startswith("*"):
         return None
@@ -34,8 +48,9 @@ def _parse_task_title(line: str) -> Optional[str]:
     if title.startswith("[ ]") or title.startswith("[x]"):
         title = title[3:].strip()  # remove checkbox
     if " - " in title:
-        title = title.split(" - ")[0].strip()  # drop description suffix
-    return title
+        title_part, desc_part = title.split(" - ", 1)
+        return title_part.strip(), desc_part.strip()
+    return title, None
 
 
 def get_workspace() -> str:
@@ -289,61 +304,70 @@ def register_tools(server: MCPServer):
         return f"Successfully deleted task '{title}' from {column}"
     
     @server.tool()
-    def list_tasks(column: Optional[str] = None) -> str:
+    def list_tasks(column: Optional[str] = None, verbose: bool = False) -> str:
         """
         List tasks from the kanban board.
-        
+
         Args:
             column: Optional column filter (BACKLOG, TODO, DOING, DONE).
                    If not provided, returns tasks from all columns.
-        
+            verbose: If True, return [{title, description}] per task instead
+                   of titles-only. Description is the text after ` - ` on the
+                   task line, or null if no separator. Default False keeps
+                   the existing titles-only shape for back-compat.
+
         Returns:
             JSON string with task information
-        
+
         Example:
-            list_tasks()  # All tasks
-            list_tasks("DOING")  # Only tasks in DOING column
-        
-        Output format:
-            {
-                "BACKLOG": ["Task 1", "Task 2"],
-                "TODO": ["Task 3"],
-                "DOING": ["Task 4"],
-                "DONE": ["Task 5", "Task 6"]
-            }
+            list_tasks()                        # All tasks, titles only
+            list_tasks("DOING")                 # Filter; titles only
+            list_tasks(verbose=True)            # All tasks with descriptions
+
+        Output format (default):
+            {"BACKLOG": ["Task 1"], "TODO": ["Task 3"], ...}
+
+        Output format (verbose=True):
+            {"BACKLOG": [{"title": "Task 1", "description": "details"}], ...}
         """
         kanban_path = get_kanban_path()
-        
+
         if not os.path.exists(kanban_path):
             return json.dumps({"error": f"Kanban board not found at {kanban_path}"})
-        
+
         try:
             with open(kanban_path, 'r', encoding='utf-8') as f:
                 content = f.read()
         except Exception as e:
             return json.dumps({"error": f"Error reading kanban board: {str(e)}"})
-        
+
         lines = content.split('\n')
-        tasks = {}
+        tasks: dict = {}
         current_column = None
-        
+
         for line in lines:
             if line.strip().startswith("## "):
                 current_column = line.strip()[3:].strip()
                 if current_column not in tasks:
                     tasks[current_column] = []
             elif current_column:
-                parsed = _parse_task_title(line)
+                parsed = _parse_task_title_with_description(line)
                 if parsed is not None:
-                    tasks[current_column].append(parsed)
-        
+                    title, description = parsed
+                    if verbose:
+                        tasks[current_column].append(
+                            {"title": title, "description": description}
+                        )
+                    else:
+                        tasks[current_column].append(title)
+
         # Filter by column if specified
         if column:
             if column in tasks:
                 return json.dumps({column: tasks[column]}, indent=2)
             else:
                 return json.dumps({column: []}, indent=2)
-        
+
         return json.dumps(tasks, indent=2)
     
     @server.tool()
