@@ -466,10 +466,13 @@ def register_tools(server: MCPServer):
             with open(state_path, 'r', encoding='utf-8') as f:
                 state = json.load(f)
             
+            # D6: read state["tasks"] to match StateManager writer convention
+            # (sync_kanban.py:91,116,123). The legacy "items" key was never set,
+            # so this previously reported zero synced tasks regardless of state.
             return json.dumps({
-                "synced_tasks": len(state.get("items", {})),
+                "synced_tasks": len(state.get("tasks", {})),
                 "state_file": state_path,
-                "github_items": list(state.get("items", {}).keys())
+                "github_items": list(state.get("tasks", {}).keys())
             }, indent=2)
         except Exception as e:
             return json.dumps({
