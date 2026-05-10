@@ -71,28 +71,29 @@ def register_resources(server: MCPServer):
         except Exception as e:
             return json.dumps({"error": f"Error reading board: {str(e)}"}, indent=2)
         
-        # Parse tasks by column
+        # D5: discover columns dynamically from the markdown rather
+        # than the previous hardcoded {BACKLOG, TODO, DOING, DONE}
+        # initializer. Mirrors the parser in tools.list_tasks so any
+        # column the parser accepts (REVIEW, custom names) is counted
+        # in both per-column figures and the total. Convenience aliases
+        # (in_progress / completed / pending) stay for back-compat
+        # callers but tolerate missing columns via .get(..., 0).
         lines = content.split('\n')
-        stats = {
-            "BACKLOG": 0,
-            "TODO": 0,
-            "DOING": 0,
-            "DONE": 0
-        }
+        stats: dict = {}
         current_column = None
-        
+
         for line in lines:
             if line.strip().startswith("## "):
                 current_column = line.strip()[3:].strip()
+                stats.setdefault(current_column, 0)
             elif current_column and line.strip().startswith("*"):
-                if current_column in stats:
-                    stats[current_column] += 1
-        
-        stats["total"] = sum(stats.values())
-        stats["in_progress"] = stats["DOING"]
-        stats["completed"] = stats["DONE"]
-        stats["pending"] = stats["BACKLOG"] + stats["TODO"]
-        
+                stats[current_column] = stats.get(current_column, 0) + 1
+
+        stats["total"] = sum(v for v in stats.values() if isinstance(v, int))
+        stats["in_progress"] = stats.get("DOING", 0)
+        stats["completed"] = stats.get("DONE", 0)
+        stats["pending"] = stats.get("BACKLOG", 0) + stats.get("TODO", 0)
+
         return json.dumps(stats, indent=2)
     
     @server.resource(
