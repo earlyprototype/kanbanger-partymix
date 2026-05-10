@@ -13,7 +13,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from kanban_io import atomic_write_json, kanban_lock
+from kanban_io import (
+    atomic_write_json,
+    kanban_lock,
+    parse_task_title_with_description,
+)
 
 # Load environment variables from .env file if it exists
 try:
@@ -70,6 +74,16 @@ class LocalBoard:
         occurrence wins) with a stderr warning. Without dedup the
         sync path would create duplicate GitHub items for what looks
         like one logical task to the user.
+
+        D8: dedup uses the stripped title (text before any ` - desc`
+        separator) computed via the shared
+        `kanban_io.parse_task_title_with_description` helper — same
+        semantics as the MCP-tools side. Without the shared helper the
+        two parsers drifted and `* [ ] X` + `* [ ] X - extra` pushed
+        as two separate GH items even though MCP-tools dedup'd them.
+        The pushed `title` field still carries the full post-checkbox
+        text so the description survives to GitHub on the first
+        occurrence; only the dedup key is the stripped form.
         """
         with open(self.file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -110,16 +124,19 @@ class LocalBoard:
                 if task_match:
                     is_done = task_match.group(1).lower() == 'x'
                     title = task_match.group(2).strip()
-                    if title in seen_per_section[current_section]:
+                    parsed = parse_task_title_with_description(line)
+                    dedup_key = parsed[0] if parsed is not None else title
+                    if dedup_key in seen_per_section[current_section]:
                         print(
                             f"Warning: duplicate task title in section "
-                            f"'{current_section}': '{title}'. Keeping first "
-                            f"occurrence; dropping subsequent duplicate to "
-                            f"prevent duplicate GitHub items on sync.",
+                            f"'{current_section}': '{dedup_key}'. Keeping "
+                            f"first occurrence; dropping subsequent "
+                            f"duplicate to prevent duplicate GitHub items "
+                            f"on sync.",
                             file=sys.stderr,
                         )
                         continue
-                    seen_per_section[current_section].add(title)
+                    seen_per_section[current_section].add(dedup_key)
                     tasks[current_section].append({
                         'title': title,
                         'done': is_done

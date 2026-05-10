@@ -15,7 +15,11 @@ from pathlib import Path
 from typing import Optional, Tuple
 from mcp_use.server import MCPServer
 
-from kanban_io import atomic_write_text, kanban_lock
+from kanban_io import (
+    atomic_write_text,
+    kanban_lock,
+    parse_task_title_with_description as _parse_task_title_with_description,
+)
 
 # S6: title-injection guard. Lines beginning with `* [` are kanban
 # task entries and `## ` are column headers; allowing those patterns
@@ -104,31 +108,11 @@ def _parse_task_title(line: str) -> Optional[str]:
 
     R5: this is the canonical title extraction used by move_task /
     delete_task for exact-equality comparison and near-match suggestions.
+    D8: delegates to the shared `kanban_io.parse_task_title_with_description`
+    so MCP-tools and sync_kanban use the same parser.
     """
     parsed = _parse_task_title_with_description(line)
     return parsed[0] if parsed is not None else None
-
-
-def _parse_task_title_with_description(
-    line: str,
-) -> Optional[Tuple[str, Optional[str]]]:
-    """Extract `(title, description_or_None)` from a markdown task line.
-
-    D3: shared parser used by both `_parse_task_title` (titles only,
-    R5 path) and `list_tasks(verbose=True)` (titles + descriptions).
-    Description is whatever follows the FIRST ` - ` on the line; None
-    if no separator. Returns None for non-task lines.
-    """
-    stripped = line.strip()
-    if not stripped.startswith("*"):
-        return None
-    title = stripped[1:].strip()  # remove leading *
-    if title.startswith("[ ]") or title.startswith("[x]"):
-        title = title[3:].strip()  # remove checkbox
-    if " - " in title:
-        title_part, desc_part = title.split(" - ", 1)
-        return title_part.strip(), desc_part.strip()
-    return title, None
 
 
 def validate_task_title(title: str) -> Tuple[bool, Optional[str]]:

@@ -15,11 +15,39 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterator, Optional, Tuple
 
 
 _LOCK_FILENAME = ".kanban.lock"
 _STATE_FILENAME = ".kanban.json"
+
+
+def parse_task_title_with_description(
+    line: str,
+) -> Optional[Tuple[str, Optional[str]]]:
+    """Extract `(title, description_or_None)` from a markdown task line.
+
+    D8: shared parser hoisted out of `kanbanger_mcp.tools` so both the
+    MCP-tools code path AND the `sync_kanban.LocalBoard.parse` code path
+    can use the same canonical helper. Without sharing, the two parsers
+    drifted: tools.py stripped ` - description` from titles for dedup,
+    sync_kanban kept the full post-checkbox text — so `* [ ] X` and
+    `* [ ] X - extra` collapsed to one task on the MCP side but pushed
+    as two separate items on the sync side.
+
+    Description is whatever follows the FIRST ` - ` on the line; None
+    if no separator. Returns None for non-task lines.
+    """
+    stripped = line.strip()
+    if not stripped.startswith("*"):
+        return None
+    title = stripped[1:].strip()  # remove leading *
+    if title.startswith("[ ]") or title.startswith("[x]"):
+        title = title[3:].strip()  # remove checkbox
+    if " - " in title:
+        title_part, desc_part = title.split(" - ", 1)
+        return title_part.strip(), desc_part.strip()
+    return title, None
 
 
 def atomic_write_text(path: str, content: str, encoding: str = "utf-8") -> None:
