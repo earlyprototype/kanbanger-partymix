@@ -7,7 +7,9 @@ import re
 import os
 import sys
 import json
+import shutil
 import argparse
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -118,10 +120,48 @@ class StateManager:
         }
 
     def load(self) -> Dict:
-        """Load state from .kanban.json if it exists."""
+        """Load state from .kanban.json if it exists.
+
+        R7: on a corrupt JSON parse, copy the bad file aside (preserving
+        it for postmortem) and reset to an empty default state. Lets the
+        tool keep running rather than crashing on a partial write or
+        manual edit; the user loses sync history but no further damage
+        accumulates. Recovery via markdown-rebuild is deferred (would
+        warrant its own audit item).
+        """
         if self.state_file.exists():
-            with open(self.state_file, 'r', encoding='utf-8') as f:
-                self.state = json.load(f)
+            try:
+                with open(self.state_file, 'r', encoding='utf-8') as f:
+                    self.state = json.load(f)
+            except json.JSONDecodeError as exc:
+                timestamp = datetime.now().strftime("%Y%m%dT%H%M%S")
+                backup_path = self.state_file.with_name(
+                    f"{self.state_file.name}.corrupt-{timestamp}"
+                )
+                try:
+                    shutil.copy2(self.state_file, backup_path)
+                except Exception as copy_exc:
+                    backup_note = (
+                        f"backup attempt failed: {copy_exc!r}; "
+                        f"original left in place at {self.state_file}"
+                    )
+                else:
+                    backup_note = f"backed up to {backup_path}"
+                print(
+                    f"Warning: .kanban.json is corrupt "
+                    f"({exc.msg} at line {exc.lineno} col {exc.colno}); "
+                    f"{backup_note}. Resetting to empty state — sync "
+                    f"history is lost; subsequent sync runs will treat "
+                    f"the board as never-synced.",
+                    file=sys.stderr,
+                )
+                self.state = {
+                    "schema_version": SCHEMA_VERSION,
+                    "repo_node_id": None,
+                    "project_id": None,
+                    "tasks": {},
+                }
+                return self.state
             # R8: backwards-compat. Pre-R8 state files have no
             # schema_version; v0 and v1 are structurally identical, so
             # silently upgrade in-memory (next save persists the field).
