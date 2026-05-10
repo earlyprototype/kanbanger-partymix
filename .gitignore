@@ -57,3 +57,10 @@ spec_engine_integration.py
 
 # Project-specific files
 TESTING.md
+
+# Worker smoke-test scratch (audit-cluster 2026-05-10)
+# See kanbanger-partymix-worker skill: Direct-import smoke testing section
+_smoke_*.py
+_smoke_*.txt
+_smoke_*.out
+_smoke_*.err
