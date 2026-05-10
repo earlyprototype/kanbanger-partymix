@@ -5,6 +5,7 @@ Callable functions that LLMs can use to interact with kanban boards.
 """
 
 import os
+import re
 import sys
 import json
 import difflib
@@ -15,6 +16,13 @@ from typing import Optional, Tuple
 from mcp_use.server import MCPServer
 
 from kanban_io import atomic_write_text, kanban_lock
+
+# S6: title-injection guard. Lines beginning with `* [` are kanban
+# task entries and `## ` are column headers; allowing those patterns
+# at the start of a stored title would let a malicious or careless
+# add_task call create or shadow board structure.
+_TASK_LINE_PREFIX_RE = re.compile(r"^\*\s+\[")
+TITLE_MAX_LEN = 500
 
 
 def _parse_task_title(line: str) -> Optional[str]:
@@ -53,6 +61,39 @@ def _parse_task_title_with_description(
     return title, None
 
 
+def validate_task_title(title: str) -> Tuple[bool, Optional[str]]:
+    """Return (ok, error_message) for a candidate task title.
+
+    S6: pure validator (no normalization, no I/O) so callers can reuse
+    it for E2's structured-error refactor and for future per-field
+    validators. Rejects:
+      - newlines (would split a task across markdown lines)
+      - leading '## ' (would be parsed as a new column header)
+      - leading '* [' patterns (would be parsed as a new task line)
+      - titles over TITLE_MAX_LEN characters
+    Caller is responsible for tab-to-space normalization before
+    validation if desired.
+    """
+    if "\n" in title:
+        return False, "title contains a newline character"
+    if title.startswith("## "):
+        return False, (
+            "title starts with '## ', which would be parsed as a new "
+            "column header and corrupt the board"
+        )
+    if _TASK_LINE_PREFIX_RE.match(title):
+        return False, (
+            "title starts with '* [' (markdown task syntax), which "
+            "would be parsed as a new task entry"
+        )
+    if len(title) > TITLE_MAX_LEN:
+        return False, (
+            f"title exceeds {TITLE_MAX_LEN} character limit "
+            f"({len(title)} chars)"
+        )
+    return True, None
+
+
 def get_workspace() -> str:
     """Get the current workspace directory.
 
@@ -88,15 +129,24 @@ def register_tools(server: MCPServer):
             add_task("Implement user authentication", "TODO", "Add JWT-based auth system")
         """
         kanban_path = get_kanban_path()
-        
+
         if not os.path.exists(kanban_path):
             return f"Error: Kanban board not found at {kanban_path}"
-        
+
         # Validate column
         valid_columns = ["BACKLOG", "TODO", "DOING", "DONE"]
         if column not in valid_columns:
             return f"Error: Invalid column '{column}'. Must be one of: {', '.join(valid_columns)}"
-        
+
+        # S6: normalize tabs to spaces before validation so a tab-only
+        # title isn't accepted as 'non-empty' but also isn't rejected
+        # for containing a tab. Validation rejects markdown-injecting
+        # titles (newline, '## ', '* [') and over-long titles.
+        title = title.replace("\t", " ")
+        ok, err = validate_task_title(title)
+        if not ok:
+            return f"Error: {err}"
+
         # R2: serialize mutations cross-process so concurrent writers can't lost-update.
         with kanban_lock(get_workspace()):
             # Read current board
