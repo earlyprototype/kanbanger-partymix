@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
 
@@ -56,6 +57,47 @@ def discover_columns(workspace: str) -> list:
             if name and name not in columns:
                 columns.append(name)
     return columns
+
+
+def ensure_review_column(workspace) -> bool:
+    """Insert REVIEW into the board between DOING and DONE if absent.
+
+    Returns True if migration was applied (4-column board upgraded
+    to 5-column), False if REVIEW was already present (no-op) or
+    the board doesn't exist.
+
+    Acquires the kanban lock for the full read-modify-write so the
+    migration is atomic against any other writer. Accepts either
+    `str` or `pathlib.Path` for `workspace` so callers (server.py
+    uses `str`; tests pass `Path` via the `kanban_workspace`
+    fixture) don't need to coerce at the call site.
+    """
+    workspace = Path(workspace)
+    kanban_path = workspace / _KANBAN_FILENAME
+    if not kanban_path.exists():
+        # No board to migrate; let downstream tools surface
+        # kanban_not_found on their own terms.
+        return False
+
+    with kanban_lock(str(workspace)):
+        text = kanban_path.read_text(encoding="utf-8")
+        columns = discover_columns(str(workspace))
+        if "REVIEW" in columns:
+            return False
+
+        # Insert `## REVIEW\n\n` before `## DONE` so column order
+        # becomes BACKLOG -> TODO -> DOING -> REVIEW -> DONE. If
+        # DONE is missing too (atypical), append REVIEW at the end
+        # and let downstream operations handle the resulting board.
+        done_marker = "## DONE"
+        if done_marker in text:
+            new_text = text.replace(done_marker,
+                                    "## REVIEW\n\n" + done_marker, 1)
+        else:
+            new_text = text.rstrip() + "\n\n## REVIEW\n"
+
+        atomic_write_text(str(kanban_path), new_text)
+        return True
 
 
 def parse_task_title_with_description(

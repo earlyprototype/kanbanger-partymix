@@ -98,7 +98,19 @@ def main():
     if not os.path.exists(kanban_path):
         print(f"Warning: No _kanban.md found in workspace: {workspace}", file=sys.stderr)
         print(f"The server will start but tools may fail until a kanban board is created.", file=sys.stderr)
-    
+
+    # REVIEW-gate primitives (propose_done / approve_done / reject_review)
+    # assume REVIEW is on the board. Auto-migrate any 4-column v2.x board
+    # in place before tools register, so downstream code paths can rely
+    # on REVIEW being present. Idempotent no-op on 5-column boards.
+    from kanban_io import ensure_review_column
+    if ensure_review_column(workspace):
+        print(
+            f"kanbanger: added REVIEW column to {os.path.join(workspace, '_kanban.md')} "
+            f"(5-column schema required by review-gate primitives)",
+            file=sys.stderr,
+        )
+
     # Create and run server
     server = create_server()
     
