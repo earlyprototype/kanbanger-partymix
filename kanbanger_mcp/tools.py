@@ -50,6 +50,9 @@ ERROR_CONFIGURATION = "configuration_error"
 # column for the operation." Used by propose_done, approve_done, and
 # reject_review.
 ERROR_INVALID_STATE = "invalid_state"
+# reject_review demands a non-empty reason — empty rejections would
+# create a Rework task with no actionable context.
+ERROR_MISSING_REASON = "missing_reason"
 
 
 def _error(code: str, message: str, **context) -> str:
@@ -131,6 +134,31 @@ def _parse_task_title(line: str) -> Optional[str]:
     """
     parsed = _parse_task_title_with_description(line)
     return parsed[0] if parsed is not None else None
+
+
+def _format_rework_entries(title: str, reason: str) -> Tuple[str, str]:
+    """Return the (done-line, rework-line) pair for a Pattern C reject.
+
+    done-line:   re-emits the original task with [x] checkbox and a
+                 REJECTED annotation + pointer to the Rework task.
+                 Title is preserved verbatim so downstream parsers
+                 still match the same key.
+    rework-line: the new Rework task with the reason as its description
+                 plus a pointer back to the original.
+
+    Lines are returned WITHOUT trailing newlines so they slot directly
+    into a `content.split("\\n")` list — `'\\n'.join(...)` reconstitutes
+    the file. Caller has already validated that `reason` is non-empty.
+    """
+    done_line = (
+        f"*   [x] {title} - REJECTED: {reason}; "
+        f"rework: Rework: {title}"
+    )
+    rework_line = (
+        f"*   [ ] Rework: {title} - "
+        f"Reason: {reason}; Original task: {title}"
+    )
+    return done_line, rework_line
 
 
 def validate_task_title(title: str) -> Tuple[bool, Optional[str]]:
@@ -995,3 +1023,155 @@ def register_tools(server: MCPServer):
 
         return _ok(task={"title": title, "from_column": "REVIEW",
                          "to_column": "DONE"})
+
+    @server.tool()
+    def reject_review(title: str, reason: str) -> str:
+        """
+        Reject work in REVIEW, recording the rejection and creating a new
+        Rework task.
+
+        Args:
+            title: Exact title of the task currently in REVIEW.
+            reason: Required human-readable reason for the rejection.
+                Cannot be None or empty/whitespace; the reason is the
+                context the Rework task carries forward.
+
+        Returns:
+            JSON string. On success:
+                {"success": true,
+                 "original": {"title": str, "from_column": "REVIEW",
+                              "to_column": "DONE",
+                              "annotation": "REJECTED: <reason>; rework: Rework: <title>"},
+                 "rework":   {"title": "Rework: <title>", "column": "TODO",
+                              "reason": str}}
+            On error: {"success": false, "error_code": str, "message": str,
+                       "context": {...}}
+
+        Example:
+            reject_review("Implement auth", reason="Missing rate limiting")
+
+        Workflow (Pattern C - two-entry rejection):
+            This is the gate-holder's pushback primitive. When the work
+            proposed via propose_done needs changes, the reviewer rejects
+            with a reason. The original task becomes a DONE record of
+            "this shipped but was rejected at review" (with the reason
+            annotated inline), and a NEW task "Rework: <original>" lands
+            in TODO with the reason as its description and a link back
+            to the original. The worker picks up the Rework task,
+            addresses the feedback, and calls propose_done on the Rework
+            task when ready for re-review.
+
+        Errors:
+            - kanban_not_found: _kanban.md missing in workspace
+            - missing_reason: reason was None, empty, or whitespace-only
+            - task_not_found: title doesn't match any task
+            - invalid_state: task exists but is not in REVIEW (current
+              column reported in context)
+            - write_failed: atomic write failed
+        """
+        kanban_path = get_kanban_path()
+        if not os.path.exists(kanban_path):
+            return _error(
+                ERROR_KANBAN_NOT_FOUND,
+                f"Kanban board not found at {kanban_path}",
+                kanban_path=kanban_path,
+            )
+
+        # Reason validation BEFORE board I/O — caller error, no lock needed.
+        if reason is None or not str(reason).strip():
+            return _error(
+                ERROR_MISSING_REASON,
+                "reject_review requires a non-empty reason. A rejection "
+                "without context would create a Rework task with no "
+                "actionable description.",
+                title=title,
+            )
+
+        with kanban_lock(get_workspace()):
+            try:
+                with open(kanban_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception as e:
+                return _error(
+                    ERROR_READ_FAILED,
+                    f"Error reading kanban board: {str(e)}",
+                )
+
+            lines = content.split('\n')
+
+            current_column = None
+            found_in_column = None
+            found_index = None
+            for i, line in enumerate(lines):
+                s = line.strip()
+                if s.startswith("## "):
+                    current_column = s[3:].strip()
+                    continue
+                if current_column is None:
+                    continue
+                parsed = _parse_task_title(line)
+                if parsed is not None and parsed == title:
+                    found_in_column = current_column
+                    found_index = i
+                    break
+
+            if found_in_column is None:
+                return _error(
+                    ERROR_TASK_NOT_FOUND,
+                    f"Task '{title}' not found in any column",
+                    title=title,
+                )
+            if found_in_column != "REVIEW":
+                return _error(
+                    ERROR_INVALID_STATE,
+                    f"Task '{title}' is in {found_in_column}, not REVIEW. "
+                    f"reject_review moves REVIEW -> DONE (with REJECTED "
+                    f"annotation) only.",
+                    title=title,
+                    current_column=found_in_column,
+                    expected_column="REVIEW",
+                )
+
+            # Pattern C: two-entry atomic move.
+            # 1. Remove the original line from REVIEW.
+            # 2. Insert the REJECTED-annotated line at top of DONE.
+            # 3. Insert the new Rework line at top of TODO.
+            # All inside one lock + one atomic_write_text so the kanban
+            # is never in a half-rejected state.
+            done_line, rework_line = _format_rework_entries(title, reason)
+            lines.pop(found_index)
+
+            # Insert into DONE first. Since DONE comes after TODO in
+            # canonical column order, inserting into DONE first does
+            # not perturb the TODO header index for the second insert.
+            for i, line in enumerate(lines):
+                if line.strip() == "## DONE":
+                    lines.insert(i + 1, done_line)
+                    break
+            for i, line in enumerate(lines):
+                if line.strip() == "## TODO":
+                    lines.insert(i + 1, rework_line)
+                    break
+
+            try:
+                atomic_write_text(kanban_path, '\n'.join(lines))
+            except Exception as e:
+                return _error(
+                    ERROR_WRITE_FAILED,
+                    f"Error writing kanban board: {str(e)}",
+                )
+
+        annotation = f"REJECTED: {reason}; rework: Rework: {title}"
+        return _ok(
+            original={
+                "title": title,
+                "from_column": "REVIEW",
+                "to_column": "DONE",
+                "annotation": annotation,
+            },
+            rework={
+                "title": f"Rework: {title}",
+                "column": "TODO",
+                "reason": reason,
+            },
+        )
