@@ -28,8 +28,11 @@ Enable LLMs to:
 ## DOING
 *   [ ] Task currently being worked on
 
+## REVIEW
+*   [ ] Task an AI worker marked complete, awaiting human approval
+
 ## DONE
-*   [x] Completed task (checked box)
+*   [x] Completed task (checked box, human-approved)
 *   [x] Another finished item
 ```
 
@@ -44,7 +47,18 @@ Enable LLMs to:
    - `BACKLOG` → Maps to "Backlog" status
    - `TODO` or `TO DO` → Maps to "Todo" status
    - `DOING` or `IN PROGRESS` → Maps to "InProgress" status
+   - `REVIEW` → Maps to "Review" status (the REVIEW gate — see §REVIEW Gate Semantics)
    - `DONE` or `COMPLETE` → Maps to "Done" status
+
+**GitHub Projects setup:** the linked GitHub Project's Status field must have all five options (case-sensitive) for sync to assign the right status. If `Review` is missing on the Project, sync will create REVIEW items with no Status and emit a warning until the option is added.
+
+## REVIEW Gate Semantics
+
+The REVIEW column is **the platform's gate primitive for AI/human collaboration**. AI workers move tasks to REVIEW when they believe the work is complete; humans (or reviewer agents) move REVIEW → DONE after verifying. This contract is enforced by the MCP `propose_done` / `approve_done` / `reject_review` tools.
+
+When syncing to GitHub Projects, REVIEW items map to a `Review` Status option. The GH Project's Status field must include `Review` (case-sensitive) for sync to assign the status; otherwise items land with no Status and the sync warns until the option is added.
+
+Rule of thumb: **AI agents never move work directly to DONE** — they move it to REVIEW; humans approve REVIEW → DONE.
 
 ### Optional Elements
 
@@ -77,8 +91,11 @@ Enable LLMs to:
    ## DOING
    *   [ ] Currently active (1-3 items max for focus)
 
+   ## REVIEW
+   *   [ ] AI-completed work awaiting human approval
+
    ## DONE
-   *   [x] Recently completed
+   *   [x] Recently completed (human-approved)
    ```
 
 3. **Best practices:**
@@ -290,7 +307,7 @@ Before finalizing edits, verify:
 
 - [ ] All columns use `## ` headers
 - [ ] All tasks use `*   [ ]` or `*   [x]` format
-- [ ] Column names are BACKLOG, TODO, DOING, or DONE
+- [ ] Column names are BACKLOG, TODO, DOING, REVIEW, or DONE
 - [ ] Only DONE tasks have `[x]` checkboxes
 - [ ] Task titles are clear and actionable
 - [ ] No duplicate task titles (causes sync issues)

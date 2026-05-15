@@ -109,6 +109,8 @@ class LocalBoard:
                     current_section = 'Todo'
                 elif 'DOING' in normalized or 'IN PROGRESS' in normalized:
                     current_section = 'InProgress'
+                elif 'REVIEW' in normalized:
+                    current_section = 'Review'
                 elif 'DONE' in normalized or 'COMPLETE' in normalized:
                     current_section = 'Done'
                 else:
@@ -565,10 +567,14 @@ class Syncer:
                 # New task - create it
                 print(f"  [CREATE] {title} => {desired_status}")
                 item_id = self.client.create_draft_issue(project_id, title)
-                self.state.update_task(title, item_id, desired_status)
-                # D7: persist mapping immediately after create so a crash
-                # before the next iteration cannot orphan the GH item.
-                # Atomic+locked save (R1+R2+D1) makes per-item saves cheap.
+                # D7+D12: persist item_id with status=None first. The
+                # confirmed status is only persisted AFTER the status
+                # update mutation succeeds. Prevents the stuck-no-status
+                # idempotency bug where a transient failure between
+                # create_draft_issue and update_item_status leaves state
+                # desynced from GH (state thinks status set; GH has none;
+                # next sync sees stored == desired and skips forever).
+                self.state.update_task(title, item_id, None)
                 self.state.save()
 
                 # Set initial status
@@ -577,18 +583,46 @@ class Syncer:
                         project_id, item_id, status_field_id,
                         self.status_options[desired_status]
                     )
+                    # Confirmed — persist status
+                    self.state.update_task(title, item_id, desired_status)
+                    self.state.save()
+                else:
+                    # No matching Status option on the Project. Item is
+                    # created with no Status; state stays at None so the
+                    # next sync will [UPDATE]-retry. Loud + persistent:
+                    # the user must add the option or remove the kanban
+                    # entry. (Closes the partymix REVIEW-sync gap class
+                    # — audit D11.)
+                    print(
+                        f"  WARNING: '{desired_status}' has no matching "
+                        f"Status option on the GitHub Project; item "
+                        f"created with no Status. Sync will retry next "
+                        f"run.",
+                        file=sys.stderr,
+                    )
             elif stored_status != desired_status:
-                # Status changed
+                # Status changed (or first status set after a previous
+                # failed attempt — see D12 pattern above)
                 print(f"  [UPDATE] {title}: {stored_status} => {desired_status}")
                 if desired_status in self.status_options:
                     self.client.update_item_status(
                         project_id, item_id, status_field_id,
                         self.status_options[desired_status]
                     )
-                self.state.update_task(title, item_id, desired_status)
-                # D7: persist after each update so partial-completion state
-                # survives crashes mid-loop.
-                self.state.save()
+                    # Confirmed — persist
+                    self.state.update_task(title, item_id, desired_status)
+                    self.state.save()
+                else:
+                    # No matching Status option. Skip the update; state
+                    # stays at stored_status. Sync will keep flagging
+                    # until the option is added or the kanban entry is
+                    # removed.
+                    print(
+                        f"  WARNING: '{desired_status}' has no matching "
+                        f"Status option on the GitHub Project; status "
+                        f"not updated. Sync will retry next run.",
+                        file=sys.stderr,
+                    )
             else:
                 # No change
                 print(f"  [OK] {title}")
