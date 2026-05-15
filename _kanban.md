@@ -10,10 +10,15 @@
 *   [ ] Support for custom field mappings beyond Status
 
 ## TODO
+*   [ ] Decide setup.py vs __version__ as version source-of-truth before PyPI publish (audit D10)
 
 ## DOING
 
 ## DONE (Recent)
+*   [x] Bundle 1b: D9 helper extraction, move_task strict-gate, S7 Rework title revalidation
+*   [x] Bug A: add_task appends at column bottom; delete_task compacts blanks (byte-exact round-trip)
+*   [x] kanban-doctor preflight diagnostic (collision + version + schema_version checks)
+*   [x] Per-project venv install pattern (setup-venv.py + INSTALL.md; resolves kanbanger_mcp import collision)
 *   [x] Implement MCP server for LLM integration (resources, tools, prompts)
 
 ## DONE
