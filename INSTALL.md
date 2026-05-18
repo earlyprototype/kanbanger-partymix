@@ -63,6 +63,23 @@ config uses `${VAR:-default}` substitution. Provide actual values via
 
 Claude Code injects this `env` block into MCP server spawns.
 
+### Windows users — save `.env` as UTF-8 *without* BOM
+
+If you hand-edit `.env` in a Windows editor (Notepad, some IDE defaults)
+that saves UTF-8 *with* a BOM, the Python CLI path is fine —
+`python-dotenv` strips the BOM automatically. But if you `source ./.env`
+from Git Bash or any POSIX shell, you will get:
+
+```
+./.env: line 1: $'\357\273\277#': command not found
+```
+
+That `\357\273\277` is the UTF-8 BOM. Resave the file as **UTF-8
+(without BOM)** — in VS Code, click the encoding indicator in the
+status bar and pick "Save with Encoding -> UTF-8". Notepad++ has
+"Encoding -> UTF-8" (vs "UTF-8 with BOM"). Notepad on Windows 11 lets
+you set the encoding in the Save As dialog.
+
 ## Verifying the install
 
 After the script finishes, in the project's `.venv`:

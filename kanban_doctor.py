@@ -148,9 +148,24 @@ def check_token_format(token):
         _emit(WARN_TAG, label,
               f"starts with ghp_ but unexpected length ({len(token)})",
               "Verify the token wasn't truncated when copied")
-    elif token.startswith("ghs_") or token.startswith("gho_"):
+    elif token.startswith("gho_"):
+        # OAuth user tokens (e.g. from `gh auth token` / `gh auth login`)
+        # functionally work for the Projects V2 GraphQL calls sync makes,
+        # but they refresh whenever `gh auth login` runs again, so they
+        # are not stable for long-lived automation. WARN, don't FAIL —
+        # downstream checks (Repo visible / Projects V2 / Status field)
+        # validate that the token actually works. See INTEGRATION_REPORT
+        # entry B3.
+        _emit(WARN_TAG, label,
+              "starts with 'gho_' (OAuth user token from `gh auth login`)",
+              "OAuth tokens work but get refreshed whenever `gh auth login` "
+              "runs again. For stable long-lived automation prefer a "
+              "dedicated classic PAT (ghp_) at "
+              "https://github.com/settings/tokens")
+    elif token.startswith("ghs_"):
         _emit(FAIL_TAG, label,
-              f"token type prefix '{token[:4]}' is not a personal-use PAT",
+              "token type prefix 'ghs_' is a GitHub App server-to-server "
+              "token, not a personal-use PAT",
               "Use a classic Personal Access Token (ghp_) created at "
               "https://github.com/settings/tokens")
     else:
@@ -343,14 +358,23 @@ def check_status_field(projects):
               "Add a Status (single-select) field to your Project")
         return
     opts = {o["name"] for o in status_field["options"]}
-    required = {"Backlog", "Todo", "InProgress", "Done"}
+    # Partymix is the 5-column release: BACKLOG/TODO/DOING/REVIEW/DONE
+    # is auto-injected by kanbanger_mcp.server at startup, and
+    # sync_kanban.LocalBoard.parse maps `## REVIEW` -> Status="Review".
+    # The GH Project's Status field must therefore expose all five
+    # options or REVIEW items land with no Status. See
+    # INTEGRATION_REPORT entry B4.
+    required = {"Backlog", "Todo", "InProgress", "Review", "Done"}
     missing = required - opts
     if missing:
         _emit(FAIL_TAG, label,
               f"Status field missing: {sorted(missing)}",
-              f"Edit Status field; current options: {sorted(opts)}")
+              f"Edit Status field; current options: {sorted(opts)}. "
+              "Partymix is the 5-column release — REVIEW is required.")
     else:
-        _emit(PASS_TAG, label, f"Project '{target['title']}': all four required options present")
+        _emit(PASS_TAG, label,
+              f"Project '{target['title']}': all five required options "
+              f"present (Backlog/Todo/InProgress/Review/Done)")
 
 
 def check_kanban_file(workspace):
