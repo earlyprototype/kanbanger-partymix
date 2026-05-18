@@ -1,6 +1,7 @@
 #!/bin/sh
 # Kanbanger Pre-Commit Hook
 # Ensures kanban is updated and synced before allowing commits
+# Override prompts are wrapped in `[ -t 0 ]` so non-TTY callers (CI, AI agents, scripted commits) hard-fail with a remediation message instead of hanging on `read`.
 
 echo "🔍 Checking kanban status..."
 
@@ -21,8 +22,14 @@ if [ ! -f ".kanban.json" ]; then
     echo "Sync before committing:"
     echo "  kanban-sync _kanban.md"
     echo ""
-    read -p "Commit anyway? (y/N): " answer
-    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
+    if [ -t 0 ]; then
+        read -p "Commit anyway? (y/N): " answer
+        if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
+            exit 1
+        fi
+    else
+        echo "Non-interactive context detected. Refusing to override."
+        echo "Run \`kanban-sync _kanban.md\` from a terminal, then commit again."
         exit 1
     fi
 fi
@@ -35,8 +42,14 @@ if [ "_kanban.md" -nt ".kanban.json" ]; then
     echo "Sync before committing:"
     echo "  kanban-sync _kanban.md"
     echo ""
-    read -p "Commit anyway? (y/N): " answer
-    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
+    if [ -t 0 ]; then
+        read -p "Commit anyway? (y/N): " answer
+        if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
+            exit 1
+        fi
+    else
+        echo "Non-interactive context detected. Refusing to override."
+        echo "Run \`kanban-sync _kanban.md\` from a terminal, then commit again."
         exit 1
     fi
 fi
