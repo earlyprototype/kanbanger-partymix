@@ -19,10 +19,18 @@ from kanban_io import (
     parse_task_title_with_description,
 )
 
-# Load environment variables from .env file if it exists
+# Load environment variables from .env file if it exists.
+# override=True: the project's `.env` is the authoritative target for
+# this sync run. Without it, a shell-level export (e.g. a stale
+# GITHUB_REPO=owner/other-project from another workspace's profile
+# script) silently shadows the `.env` value and routes the sync to
+# the wrong project. Symptom seen during meTube integration
+# 2026-05-18: items written into a sibling repo's Project instead of
+# the intended one, with no error surfaced. See INTEGRATION_REPORT
+# entry B5.
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(override=True)
 except ImportError:
     pass  # python-dotenv not installed, skip
 
