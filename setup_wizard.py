@@ -223,7 +223,12 @@ def check_repo_project(token, repo):
 
 def check_status_field(project):
     """Check if project has proper Status field."""
-    required_options = {"Backlog", "Todo", "InProgress", "Done"}
+    # Partymix is the 5-column release: the MCP server auto-injects the
+    # REVIEW column (kanbanger_mcp/server.py) and sync maps `## REVIEW`
+    # to Status="Review". A project missing Review would let REVIEW items
+    # land with no Status, so the wizard must require all five — kept in
+    # lockstep with kanban_doctor.check_status_field.
+    required_options = {"Backlog", "Todo", "InProgress", "Review", "Done"}
     
     for field in project.get("fields", {}).get("nodes", []):
         if field and field.get("name") in ["Status", "status"]:
@@ -468,6 +473,7 @@ def main():
         print("     - Backlog")
         print("     - Todo")
         print("     - InProgress")
+        print("     - Review")
         print("     - Done")
         print("\nRun this wizard again after fixing the Status field.")
         sys.exit(1)

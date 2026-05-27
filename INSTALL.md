@@ -70,7 +70,7 @@ that saves UTF-8 *with* a BOM, the Python CLI path is fine —
 `python-dotenv` strips the BOM automatically. But if you `source ./.env`
 from Git Bash or any POSIX shell, you will get:
 
-```
+```text
 ./.env: line 1: $'\357\273\277#': command not found
 ```
 
