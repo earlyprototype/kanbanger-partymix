@@ -1,0 +1,25 @@
+# CodeRabbit configuration
+# https://docs.coderabbit.ai/guides/configure-coderabbit
+language: en-US
+reviews:
+  profile: chill
+  path_instructions:
+    - path: "tests/**/*.py"
+      instructions: |
+        Scrutinize test quality, not just whether tests pass. Flag a test when:
+        - The assertion is tautological — it would pass regardless of whether the
+          code under test is correct (e.g. comparing a value to itself, or
+          re-deriving the expected value from the same code path).
+        - It mocks the very function or behavior it claims to verify, so the real
+          logic never runs.
+        - Its only check is "did not raise" / "is not None" when a concrete output
+          or side effect should be asserted.
+        - It exercises only the happy path for code that has meaningful error or
+          edge branches.
+        - It is non-deterministic: depends on ambient environment variables, the
+          clock, network, the filesystem outside a tmp dir, or test execution order.
+        - It pins assertions to incidental output (exact log wording, ordering)
+          that would break on harmless refactors.
+        Prefer tests that assert observable behavior and outputs over internal
+        implementation details. When a new test accompanies a bug fix, note whether
+        it would actually fail against the unfixed code.

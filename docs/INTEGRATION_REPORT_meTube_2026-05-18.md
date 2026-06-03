@@ -70,7 +70,7 @@ elif 'REVIEW' in normalized:
 
 **Symptom:** After populating `.env` from `gh auth token` (an OAuth user token with scopes `repo`, `project`, `read:org`, `gist`, `workflow`), the doctor printed:
 
-```
+```text
 [FAIL] GITHUB_TOKEN format (classic-PAT check): token type prefix 'gho_' is not a personal-use PAT
 ```
 
@@ -84,7 +84,7 @@ elif 'REVIEW' in normalized:
 
 **Symptom:** After we configured all 5 options (Backlog / Todo / InProgress / Review / Done), the doctor reported:
 
-```
+```text
 [PASS] Project Status field has required options: Project 'meTube': all four required options present
 ```
 
@@ -108,7 +108,7 @@ This is a **silent target-misrouting** risk: a user could accidentally write ite
 
 **Symptom:** If a user opens `.env` in a Windows editor that saves UTF-8 with BOM, bash's `source ./.env` fails immediately:
 
-```
+```text
 ./.env: line 1: $'\357\273\277#': command not found
 ```
 
@@ -178,4 +178,4 @@ If partymix v3 already fixes (1) and (2), the action item collapses to: **releas
 - Items: 25 (Backlog 4 / Todo 12 / Review 2 / Done 7)
 - Local sidecar: `.populate-state.json` (added to meTube's `.gitignore` alongside `.kanban.json`)
 
-Stable and useable. Next maintenance pass on the kanban can use kanban-sync v2.1 OR the resilient script — both are now idempotent against the current board state (kanban-sync because `.kanban.json` would now exist after a clean run; resilient script because the sidecar persists).
+Stable and usable. Next maintenance pass on the kanban can use kanban-sync v2.1 OR the resilient script — both are now idempotent against the current board state (kanban-sync because `.kanban.json` would now exist after a clean run; resilient script because the sidecar persists).

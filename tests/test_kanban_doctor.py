@@ -162,13 +162,15 @@ def test_token_format_still_fails_on_fine_grained():
     assert counts["fail"] == 1, out
 
 
-def test_status_field_requires_review_option():
+def test_status_field_requires_review_option(monkeypatch: pytest.MonkeyPatch):
     """5-column partymix release requires Review.
 
     B4 fix: a project missing Review should FAIL with Review listed
     in the missing set; the success message should say "all five".
     """
     import kanban_doctor
+
+    monkeypatch.delenv("GITHUB_PROJECT_NUMBER", raising=False)
 
     project_without_review = {
         "number": 1,
@@ -195,9 +197,11 @@ def test_status_field_requires_review_option():
     assert "Review" in out
 
 
-def test_status_field_passes_on_full_five_column_project():
+def test_status_field_passes_on_full_five_column_project(monkeypatch: pytest.MonkeyPatch):
     """All five options present -> PASS with the 'all five' wording."""
     import kanban_doctor
+
+    monkeypatch.delenv("GITHUB_PROJECT_NUMBER", raising=False)
 
     project_full = {
         "number": 1,

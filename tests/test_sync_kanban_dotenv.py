@@ -103,6 +103,7 @@ def test_dotenv_override_actually_beats_shell_env(tmp_path: Path):
         capture_output=True,
         text=True,
         env=env,
+        timeout=30,
     )
     assert result.returncode == 0, (
         f"probe exited {result.returncode}\nstdout:{result.stdout}\n"
@@ -210,6 +211,7 @@ def test_dotenv_find_usecwd_beats_rogue_parent_env(tmp_path: Path):
         text=True,
         env=env,
         cwd=str(target_project),
+        timeout=30,
     )
     assert result.returncode == 0, (
         f"probe exited {result.returncode}\nstdout:{result.stdout}\n"
