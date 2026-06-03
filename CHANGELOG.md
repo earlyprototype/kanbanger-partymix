@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `.cursor/mcp.json` with `${workspaceFolder}` and a 4-column board). Use
   `scripts/setup-venv.py` (the per-project install path) instead. README,
   `docs/setup-flow.md`, and CONTRIBUTING were updated to match.
+- **Stale Cursor-era reference docs.** Removed `MCP_SETUP.md`,
+  `CURSOR_WORKSPACE_VARIABLES.md`, `WORKSPACE_CONFIG.md`,
+  `MCP_IMPLEMENTATION_PLAN.md`, and `install-mcp-to-workspace.ps1` — all
+  superseded by `INSTALL.md` + `scripts/setup-venv.py` (they documented the
+  removed `.cursor/mcp.json` / `${workspaceFolder}` install path).
 
 ## v0.0.1 — 2026-05-08
 
