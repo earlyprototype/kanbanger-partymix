@@ -111,7 +111,7 @@ def register_resources(server: MCPServer):
         kanban_path = get_kanban_path()
         
         if not os.path.exists(kanban_path):
-            return f"# No Kanban Board Found\n\nNo _kanban.md file exists in workspace: {get_workspace()}\n\nCreate one with:\n```\n# Project Kanban\n\n## BACKLOG\n\n## TODO\n\n## DOING\n\n## DONE\n```"
+            return f"# No Kanban Board Found\n\nNo _kanban.md file exists in workspace: {get_workspace()}\n\nCreate one with:\n```\n# Project Kanban\n\n## BACKLOG\n\n## TODO\n\n## DOING\n\n## REVIEW\n\n## DONE\n```"
         
         try:
             with open(kanban_path, 'r', encoding='utf-8') as f:
