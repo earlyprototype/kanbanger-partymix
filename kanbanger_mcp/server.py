@@ -24,25 +24,55 @@ def create_server() -> MCPServer:
         instructions="""
 Kanbanger MCP Server - Task Management via Kanban Boards
 
-This server provides tools for managing markdown-based kanban boards
-that sync with GitHub Projects V2.
+This server manages a markdown kanban board (`_kanban.md`) for the current
+project, optionally synced to GitHub Projects V2.
 
-## Workspace Awareness
-The server operates on the workspace defined by KANBANGER_WORKSPACE
-environment variable (typically set to ${workspaceFolder} by IDE).
+## Workspace
+The board is `<workspace>/_kanban.md`. <workspace> is the KANBANGER_WORKSPACE
+environment variable, or the current working directory if it is unset.
 
-## Available Capabilities:
-- Tools: Add, move, delete, list tasks; sync to GitHub
-- Resources: View current board, stats, sync status
-- Prompts: Kanban awareness, task planning, daily standup
+## First contact - is Kanbanger set up in this project?
+Before using any other tool, check whether the board exists: read the
+`kanban://current-board` resource (or look for `_kanban.md` in the workspace).
 
-## Typical Workflow:
-1. Check current board state (kanban://current-board resource)
-2. Add tasks as needed (add_task tool)
-3. Move tasks through workflow (move_task tool)
-4. Sync to GitHub Projects (sync_to_github tool)
+If `_kanban.md` does NOT exist, Kanbanger is not set up in this project yet.
+Do NOT silently create it. Tell the user, and ask if they want to set
+Kanbanger up here. If they agree, install it locally in this project:
 
-See individual tools and resources for detailed usage.
+1. If the project is not provisioned yet (no `.venv` / `.mcp.json`), run the
+   local installer from the Kanbanger source (idempotent - reuses an existing
+   venv, backs up any existing .mcp.json):
+       python <kanbanger_source>/scripts/setup-venv.py <project_dir>
+2. Create `_kanban.md` with the canonical 5-column schema
+   (BACKLOG -> TODO -> DOING -> REVIEW -> DONE):
+
+   # <Project Name> Kanban
+
+   ## BACKLOG
+   *   [ ] Future / unprioritised work
+
+   ## TODO
+   *   [ ] Ready to start, prioritised
+
+   ## DOING
+   *   [ ] In progress (keep to 1-3 items)
+
+   ## REVIEW
+   *   [ ] AI-completed work awaiting human approval
+
+   ## DONE
+   *   [x] Completed, human-approved work
+
+If `_kanban.md` already exists, proceed normally.
+
+## Capabilities
+- Tools: add, move, delete, list tasks; sync to GitHub.
+- Resources: current board (kanban://current-board), stats, sync status.
+- Prompts: kanban awareness, task planning, daily standup.
+
+## REVIEW gates DONE
+AI-completed work moves to REVIEW, never straight to DONE. A human approves
+REVIEW -> DONE.
         """.strip()
     )
     

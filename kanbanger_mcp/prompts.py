@@ -39,14 +39,15 @@ This project uses a kanban board (_kanban.md) for task tracking and syncs with G
 1. **Before starting work:** Check current board state (kanban://current-board)
 2. **When planning:** Add tasks to BACKLOG or TODO
 3. **When starting:** Move task to DOING (limit 1-2 tasks in progress)
-4. **When complete:** Move task to DONE
+4. **When AI-complete:** Move task to REVIEW (a human approves REVIEW -> DONE; never move to DONE yourself)
 5. **Periodically:** Sync to GitHub with sync_to_github()
 
 ## Column Definitions:
 - **BACKLOG**: Future ideas, features, and tasks not yet prioritized
 - **TODO**: Ready to start, prioritized tasks
 - **DOING**: Currently in progress (keep this small - focus!)
-- **DONE**: Completed tasks (keep for record)
+- **REVIEW**: AI-completed work awaiting human approval
+- **DONE**: Completed tasks, human-approved (keep for record)
 
 ## Task Format:
 - Use clear, action-oriented titles
@@ -56,7 +57,7 @@ This project uses a kanban board (_kanban.md) for task tracking and syncs with G
 
 ## When to Update Board:
 - Starting a new task → move to DOING
-- Completing a task → move to DONE
+- Finishing AI work → move to REVIEW (a human approves REVIEW → DONE)
 - Planning new work → add to BACKLOG or TODO
 - Changing priorities → reorder or move tasks
 - After significant progress → sync to GitHub

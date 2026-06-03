@@ -390,8 +390,8 @@ def check_kanban_file(workspace):
                   "Check file encoding (should be UTF-8)")
     else:
         _emit(WARN_TAG, label, f"not at {p}",
-              "Create _kanban.md with BACKLOG/TODO/DOING/REVIEW/DONE columns, "
-              "or run 'kanban-sync-setup' to generate one")
+              "Create _kanban.md with BACKLOG/TODO/DOING/REVIEW/DONE columns "
+              "(the Kanbanger MCP offers to set this up on first use)")
 
 
 def check_state_file(workspace):
