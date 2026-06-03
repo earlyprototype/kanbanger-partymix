@@ -59,8 +59,6 @@ LLM_WORKFLOW.md
 SPEC_INTEGRATION.md
 spec_engine_integration.py
 
-# Note: kanbanger-dist/ is now tracked as the official distribution package
-
 # Project-specific files
 TESTING.md
 

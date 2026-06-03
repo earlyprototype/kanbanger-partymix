@@ -39,11 +39,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HOOK_PATH = REPO_ROOT / "git-hooks" / "pre-commit"
-# Duplicate of HOOK_PATH bundled into the kanbanger-dist install package.
-# kanbanger-dist/INSTALL.sh invokes kanbanger-dist/git-hooks/install-hooks.sh,
-# which copies *this* file into the consumer's .git/hooks/, so any TTY-guard
-# fix to the source hook MUST be mirrored here or the bug ships unfixed.
-DIST_HOOK_PATH = REPO_ROOT / "kanbanger-dist" / "git-hooks" / "pre-commit"
 
 # Generous enough to absorb cold-start subprocess overhead on Windows
 # msys/Git Bash but short enough that a hanging `read` is caught
@@ -266,37 +261,4 @@ def test_hook_source_contains_tty_guards():
         f"`[ -t 0 ]` (POSIX TTY check). Found {occurrences} "
         f"occurrence(s); expected at least 2 (one per override "
         f"prompt). Hook contents:\n{src}"
-    )
-
-
-def test_source_and_dist_pre_commit_hooks_stay_in_sync():
-    """Drift guard: kanbanger-dist/git-hooks/pre-commit must mirror the source.
-
-    The dist copy is what `kanbanger-dist/INSTALL.sh` actually ships to
-    consumers (via `git-hooks/install-hooks.sh` → `cp` into `.git/hooks/`).
-    History: when the original TTY-guard fix landed it patched only the
-    source hook, leaving the dist duplicate broken for every downstream
-    installer. This test exists so that bug class can't recur silently —
-    any future edit to one hook forces an edit to the other or the test
-    fails with a clear diff pointer.
-
-    Read via `read_text` (universal-newlines on Python text mode) so
-    Windows autocrlf doesn't cause spurious CRLF-vs-LF failures in the
-    working tree; the comparison is on logical content, not byte order.
-    """
-    assert HOOK_PATH.is_file(), f"source hook missing at {HOOK_PATH}"
-    assert DIST_HOOK_PATH.is_file(), (
-        f"dist hook missing at {DIST_HOOK_PATH}; if kanbanger-dist/ has "
-        f"been removed, delete this test and DIST_HOOK_PATH together."
-    )
-    source = HOOK_PATH.read_text(encoding="utf-8")
-    dist = DIST_HOOK_PATH.read_text(encoding="utf-8")
-    assert source == dist, (
-        f"pre-commit hook has drifted between source ({HOOK_PATH}) and "
-        f"dist ({DIST_HOOK_PATH}). The dist copy is what INSTALL.sh ships "
-        f"to consumers — any divergence means downstream installs get a "
-        f"different hook than the repo claims. Sync them or delete this "
-        f"test if the divergence is intentional.\n"
-        f"--- source ({len(source)} chars) ---\n{source}\n"
-        f"--- dist ({len(dist)} chars) ---\n{dist}"
     )

@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MCP_IMPLEMENTATION_PLAN.md`, and `install-mcp-to-workspace.ps1` — all
   superseded by `INSTALL.md` + `scripts/setup-venv.py` (they documented the
   removed `.cursor/mcp.json` / `${workspaceFolder}` install path).
+- **`kanbanger-dist/` distribution bundle.** Retired the legacy hand-maintained
+  v2-era bundle (18 files) in favour of the per-project `setup-venv.py` install
+  and the planned PyPI distribution; its pre-commit drift-guard test was removed
+  with it. Recoverable via the `dist-final-2026-06-03` git tag.
 
 ## v0.0.1 — 2026-05-08
 

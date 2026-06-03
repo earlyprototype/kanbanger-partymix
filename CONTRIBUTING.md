@@ -235,23 +235,6 @@ Documentation contributions are highly valued!
 - UK English spelling
 - No emoji in documentation (per project rules)
 
-### Contributing to Distribution Package
-
-The `kanbanger-dist/` folder is the production-ready package:
-
-**When updating distribution:**
-1. Make changes in root files first
-2. Copy updated files to `kanbanger-dist/`
-3. Test the distribution package:
-```bash
-cd /tmp
-cp -r /path/to/kanbanger/kanbanger-dist ./test-dist
-cd test-dist
-pip install -e .
-```
-4. Update `DIST_README.md` if needed
-5. Update version in `MANIFEST.md`
-
 ### Translations
 
 We currently support only English. If you'd like to add translations:
@@ -288,7 +271,6 @@ kanbanger-partymix/
 ├── scripts/setup-venv.py       # Per-project venv installer
 ├── setup.py                    # Package config
 ├── git-hooks/                  # Git hook scripts
-├── kanbanger-dist/             # Distribution bundle (legacy)
 ├── _kanban.md                  # Our own kanban (dogfooding!)
 ├── README.md                   # Main documentation
 ├── INSTALL.md                  # Per-project install guide
