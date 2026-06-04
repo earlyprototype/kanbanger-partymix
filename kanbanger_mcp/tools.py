@@ -13,7 +13,7 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Optional, Tuple
-from mcp_use.server import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 from kanban_io import (
     atomic_write_text,
@@ -256,7 +256,7 @@ def get_kanban_path() -> str:
     return os.path.join(get_workspace(), "_kanban.md")
 
 
-def register_tools(server: MCPServer):
+def register_tools(server: FastMCP):
     """Register all tools with the MCP server."""
     
     @server.tool()

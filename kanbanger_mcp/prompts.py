@@ -4,10 +4,10 @@ Kanbanger MCP Prompts
 Context injection and guidance for LLMs working with kanban boards.
 """
 
-from mcp_use.server import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 
-def register_prompts(server: MCPServer):
+def register_prompts(server: FastMCP):
     """Register all prompts with the MCP server."""
     
     @server.prompt(

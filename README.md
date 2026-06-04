@@ -160,8 +160,7 @@ Create `_kanban.md` in your project root:
                 "KANBANGER_WORKSPACE": "${KANBANGER_WORKSPACE:-/abs/path/to/project}",
                 "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
                 "GITHUB_REPO": "${GITHUB_REPO:-}",
-                "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER:-}",
-                "MCP_USE_ANONYMIZED_TELEMETRY": "false"
+                "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER:-}"
             }
         }
     }

@@ -2,29 +2,27 @@
 
 from __future__ import annotations
 
-import sys
-import types
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
 
-# --- mcp_use stub --------------------------------------------------
-# kanbanger_mcp.tools and kanbanger_mcp.prompts both import
-# `mcp_use.server.MCPServer` at module scope. The real mcp_use
-# package emits an INFO telemetry line on stdout at import (R12
-# pattern, audit-cluster T1 finding) and pulls in a full server
-# runtime. For unit tests we want neither. Stubbing mcp_use in
-# sys.modules BEFORE the kanbanger imports lets us import the
-# tool/prompt modules cleanly. The stub MCPServer captures decorator
-# registrations so tests can call the registered functions directly.
+# --- registration-capturing stub ----------------------------------
+# kanbanger_mcp.tools / resources / prompts register their callables
+# via decorators on a FastMCP server. Unit tests don't need a real
+# server — only the decorated functions, so they can be called
+# directly. _StubMCPServer mirrors FastMCP's tool()/resource()/
+# prompt() decorators (each returns the function unchanged after
+# recording it), so register_tools(stub) populates stub.tools with the
+# raw callables. (The native `mcp`/FastMCP import is light, so no
+# sys.modules stubbing is needed since mcp_use was dropped 2026-06-04.)
 
 
 class _StubMCPServer:
     """Captures @server.tool() / @server.prompt() registrations.
 
-    The decorators in the real mcp_use return the decorated function
+    The decorators in the real FastMCP return the decorated function
     unchanged after registering it on the server. We mirror that so
     `register_tools(stub)` populates `stub.tools` with the decorated
     callables, and the test can invoke them directly.
@@ -60,27 +58,6 @@ class _StubMCPServer:
             self.resources[name or fn.__name__] = fn
             return fn
         return decorator
-
-
-def _install_mcp_use_stub() -> None:
-    """Install a stub `mcp_use.server` module into sys.modules.
-
-    Idempotent — re-importing in the same process is safe.
-    """
-    existing = sys.modules.get("mcp_use")
-    if (isinstance(existing, types.ModuleType)
-            and getattr(existing, "_kanbanger_test_stub", False)):
-        return
-    mcp_use = types.ModuleType("mcp_use")
-    mcp_use._kanbanger_test_stub = True
-    server_mod = types.ModuleType("mcp_use.server")
-    server_mod.MCPServer = _StubMCPServer
-    mcp_use.server = server_mod
-    sys.modules["mcp_use"] = mcp_use
-    sys.modules["mcp_use.server"] = server_mod
-
-
-_install_mcp_use_stub()
 
 
 # --- kanban workspace fixture --------------------------------------
@@ -124,9 +101,8 @@ def kanban_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def registered_tools(kanban_workspace: Path) -> dict[str, Callable]:
     """Import kanbanger_mcp.tools and return the registered tool map.
 
-    The mcp_use stub is already in place at import time (installed at
-    module top). `register_tools(stub)` populates `stub.tools` with
-    each decorated function; the test calls them directly
+    `register_tools(stub)` populates `stub.tools` with each decorated
+    function; the test calls them directly
     (e.g. `tools["propose_done"]("My Task")`).
 
     Depends on `kanban_workspace` so KANBANGER_WORKSPACE points at

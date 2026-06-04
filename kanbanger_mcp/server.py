@@ -9,18 +9,30 @@ import os
 import sys
 import argparse
 from pathlib import Path
-from mcp_use.server import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 from .tools import register_tools
 from .resources import register_resources
 from .prompts import register_prompts
 
 
-def create_server() -> MCPServer:
-    """Create and configure the Kanbanger MCP server."""
-    server = MCPServer(
+def create_server(*, host=None, port=None, debug=False) -> FastMCP:
+    """Create and configure the Kanbanger MCP server.
+
+    host/port/debug are only meaningful for the HTTP/SSE transports; the
+    default stdio transport ignores them. They are accepted here so main()
+    can configure them on the FastMCP instance — the native `mcp` SDK takes
+    them on the constructor, not on run().
+    """
+    settings = {}
+    if host is not None:
+        settings["host"] = host
+    if port is not None:
+        settings["port"] = port
+    if debug:
+        settings["debug"] = debug
+    server = FastMCP(
         name="kanbanger",
-        version="2.1.0",
         instructions="""
 Kanbanger MCP Server - Task Management via Kanban Boards
 
@@ -73,7 +85,8 @@ If `_kanban.md` already exists, proceed normally.
 ## REVIEW gates DONE
 AI-completed work moves to REVIEW, never straight to DONE. A human approves
 REVIEW -> DONE.
-        """.strip()
+        """.strip(),
+        **settings,
     )
     
     # Register all capabilities
@@ -81,6 +94,13 @@ REVIEW -> DONE.
     register_resources(server)
     register_prompts(server)
     
+    # FastMCP has no version= parameter, so serverInfo.version would
+    # otherwise default to the mcp SDK version. Set it on the low-level
+    # server so the handshake keeps advertising the kanbanger package
+    # version -- parity with the previous MCPServer(version="2.1.0").
+    from . import __version__
+    server._mcp_server.version = __version__
+
     return server
 
 
@@ -111,12 +131,6 @@ def main():
         action="store_true",
         help="Enable debug mode with development tools"
     )
-    parser.add_argument(
-        "--reload",
-        action="store_true",
-        help="Auto-reload on code changes (development only)"
-    )
-    
     args = parser.parse_args()
     
     # Validate workspace
@@ -127,7 +141,7 @@ def main():
     
     if not os.path.exists(kanban_path):
         print(f"Warning: No _kanban.md found in workspace: {workspace}", file=sys.stderr)
-        print(f"The server will start but tools may fail until a kanban board is created.", file=sys.stderr)
+        print("The server will start but tools may fail until a kanban board is created.", file=sys.stderr)
 
     # REVIEW-gate primitives (propose_done / approve_done / reject_review)
     # assume REVIEW is on the board. Auto-migrate any 4-column v2.x board
@@ -141,24 +155,20 @@ def main():
             file=sys.stderr,
         )
 
-    # Create and run server
-    server = create_server()
-    
-    print(f"Starting Kanbanger MCP Server...", file=sys.stderr)
+    # Create and run server. The native SDK takes host/port/debug on the
+    # constructor (not on run()), so configure them here for HTTP/SSE; the
+    # default stdio transport ignores them.
+    server = create_server(host=args.host, port=args.port, debug=args.debug)
+
+    print("Starting Kanbanger MCP Server...", file=sys.stderr)
     print(f"Workspace: {workspace}", file=sys.stderr)
     print(f"Transport: {args.transport}", file=sys.stderr)
-    
+
     if args.transport == "stdio":
         server.run(transport="stdio")
     else:
         print(f"Server running on {args.host}:{args.port}", file=sys.stderr)
-        server.run(
-            transport=args.transport,
-            host=args.host,
-            port=args.port,
-            reload=args.reload,
-            debug=args.debug
-        )
+        server.run(transport=args.transport)
 
 
 if __name__ == "__main__":

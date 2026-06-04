@@ -12,8 +12,13 @@ setup(
         "python-dotenv>=0.19.0",
     ],
     extras_require={
+        # Native MCP SDK (FastMCP). Capped below 2.0 on purpose: mcp v2
+        # renames FastMCP -> MCPServer and moves transport params onto
+        # run(), which would break kanbanger_mcp.server. Bump
+        # deliberately when porting to the v2 API. (Replaced mcp-use,
+        # dropped 2026-06-04 — see DECISION-drop-mcp_use.)
         "mcp": [
-            "mcp-use>=1.0.0",
+            "mcp>=1.12.0,<2.0.0",
         ],
     },
     entry_points={
@@ -23,5 +28,5 @@ setup(
             "kanbanger-mcp=kanbanger_mcp.server:main",
         ],
     },
-    python_requires=">=3.8",
+    python_requires=">=3.10",
 )

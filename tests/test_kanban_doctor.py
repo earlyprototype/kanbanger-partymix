@@ -66,8 +66,6 @@ def test_doctor_passes_on_clean_workspace(tmp_path: Path, monkeypatch: pytest.Mo
 
     monkeypatch.setenv("GITHUB_REPO", "owner/repo")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "A" * 36)
-    monkeypatch.setenv("MCP_USE_ANONYMIZED_TELEMETRY", "false")
-
     result = _run_doctor(tmp_path)
     assert result.returncode == 0, (
         f"doctor exit {result.returncode} on clean workspace.\n"
@@ -237,8 +235,6 @@ def test_doctor_flags_corrupt_state_file(tmp_path: Path, monkeypatch: pytest.Mon
 
     monkeypatch.setenv("GITHUB_REPO", "owner/repo")
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "A" * 36)
-    monkeypatch.setenv("MCP_USE_ANONYMIZED_TELEMETRY", "false")
-
     result = _run_doctor(tmp_path)
     assert result.returncode == 1, (
         f"expected exit 1 (FAIL on corrupt state), got {result.returncode}.\n"

@@ -8,14 +8,10 @@ Provides tools, resources, and prompts for LLM-assisted kanban management.
 __version__ = "2.1.0"
 __author__ = "earlyprototype"
 
-# R12: swap sys.stdout→sys.stderr around the mcp_use import chain so its at-import
-# StreamHandler (mcp_use/logging.py:95) binds to stderr; keeps MCP stdout framing clean.
-import sys as _sys
-_real_stdout = _sys.stdout
-_sys.stdout = _sys.stderr
-try:
-    from .server import create_server, main
-finally:
-    _sys.stdout = _real_stdout
+# Native `mcp` SDK (FastMCP) is import-clean: it has no stdout side-effects
+# at import, so the R12 sys.stdout→sys.stderr shim that guarded the old
+# mcp_use import is no longer needed. (mcp_use dropped 2026-06-04; see the
+# ADR in docs/adr/ and briefs/DECISION-drop-mcp_use_2026-06-03.md.)
+from .server import create_server, main
 
 __all__ = ["create_server", "main"]

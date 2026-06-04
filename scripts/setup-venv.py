@@ -55,7 +55,6 @@ def build_mcp_config(project_dir: Path, venv_python: Path) -> dict:
                     "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
                     "GITHUB_REPO": "${GITHUB_REPO:-}",
                     "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER:-}",
-                    "MCP_USE_ANONYMIZED_TELEMETRY": "false",
                 },
             }
         }

@@ -38,8 +38,7 @@ the right kanbanger.
    - `command` = absolute path to `<venv>/Scripts/python.exe` (Windows)
      or `<venv>/bin/python` (Unix)
    - `args` = `["-m", "kanbanger_mcp"]`
-   - `env` block with `KANBANGER_WORKSPACE`, GitHub credentials slots,
-     and `MCP_USE_ANONYMIZED_TELEMETRY=false`
+   - `env` block with `KANBANGER_WORKSPACE` and GitHub credentials slots
 6. Appends `.venv/` to `.gitignore` (creating the file if missing).
 
 If `.mcp.json` already exists in the target project, it is backed up to

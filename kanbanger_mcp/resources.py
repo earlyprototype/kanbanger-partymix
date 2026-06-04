@@ -11,7 +11,7 @@ import time
 import urllib.request
 import urllib.error
 from pathlib import Path
-from mcp_use.server import MCPServer
+from mcp.server.fastmcp import FastMCP
 
 from kanban_io import discover_columns
 
@@ -96,11 +96,11 @@ def get_kanban_path() -> str:
     return os.path.join(get_workspace(), "_kanban.md")
 
 
-def register_resources(server: MCPServer):
+def register_resources(server: FastMCP):
     """Register all resources with the MCP server."""
     
     @server.resource(
-        uri="kanban://current-board",
+        "kanban://current-board",
         name="current_kanban_board",
         title="Current Kanban Board",
         description="Real-time view of the _kanban.md file in the current workspace",
@@ -120,7 +120,7 @@ def register_resources(server: MCPServer):
             return f"# Error Reading Kanban Board\n\nError: {str(e)}"
     
     @server.resource(
-        uri="kanban://stats",
+        "kanban://stats",
         name="kanban_statistics",
         title="Kanban Board Statistics",
         description="Task counts and distribution across columns",
@@ -171,7 +171,7 @@ def register_resources(server: MCPServer):
         return json.dumps(stats, indent=2)
     
     @server.resource(
-        uri="kanban://sync-status",
+        "kanban://sync-status",
         name="github_sync_status",
         title="GitHub Sync Status",
         description="Information about the last sync with GitHub Projects",
@@ -208,7 +208,7 @@ def register_resources(server: MCPServer):
             }, indent=2)
     
     @server.resource(
-        uri="kanban://config",
+        "kanban://config",
         name="kanbanger_configuration",
         title="Kanbanger Configuration",
         description="Current environment configuration for kanbanger",

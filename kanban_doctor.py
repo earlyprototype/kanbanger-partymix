@@ -96,9 +96,9 @@ def _section(text):
 def check_python_version():
     label = "Python version"
     v = sys.version_info
-    if v < (3, 8):
-        _emit(FAIL_TAG, label, f"{v.major}.{v.minor} (need >= 3.8)",
-              "Install Python 3.8 or later")
+    if v < (3, 10):
+        _emit(FAIL_TAG, label, f"{v.major}.{v.minor} (need >= 3.10)",
+              "Install Python 3.10 or later")
     else:
         _emit(PASS_TAG, label, f"{v.major}.{v.minor}.{v.micro}")
 
@@ -423,25 +423,10 @@ def check_state_file(workspace):
         _emit(PASS_TAG, label, f"schema_version={schema}")
 
 
-def check_telemetry_env_var():
-    label = "MCP_USE_ANONYMIZED_TELEMETRY"
-    val = os.environ.get("MCP_USE_ANONYMIZED_TELEMETRY")
-    if val == "false":
-        _emit(PASS_TAG, label, "set to 'false' (telemetry banner suppressed)")
-    elif val:
-        _emit(WARN_TAG, label, f"set to '{val}' (expected 'false')",
-              "If using kanbanger as MCP server: set to 'false' to suppress "
-              "mcp_use's import-time stdout banner that corrupts JSON-RPC framing")
-    else:
-        _emit(WARN_TAG, label, "not set",
-              "REQUIRED for MCP server use. Set MCP_USE_ANONYMIZED_TELEMETRY=false "
-              "in your MCP client's env block. Harmless for CLI-only use.")
-
-
-def check_mcp_use_installed():
-    label = "mcp_use library"
+def check_mcp_installed():
+    label = "mcp SDK (FastMCP)"
     try:
-        import mcp_use  # noqa: F401
+        import mcp  # noqa: F401
         _emit(PASS_TAG, label, "installed (MCP server can run)")
         return True
     except ImportError:
@@ -453,7 +438,6 @@ def check_mcp_use_installed():
 def check_kanbanger_mcp_importable():
     """Surface __file__ so install-source surprises are visible."""
     label = "kanbanger_mcp package"
-    os.environ.setdefault("MCP_USE_ANONYMIZED_TELEMETRY", "false")
     try:
         import kanbanger_mcp
         version = getattr(kanbanger_mcp, "__version__", "unknown")
@@ -591,8 +575,7 @@ def main():
     check_state_file(workspace)
 
     _section("MCP server")
-    check_telemetry_env_var()
-    check_mcp_use_installed()
+    check_mcp_installed()
     _src, import_version = check_kanbanger_mcp_importable()
 
     _section("Install integrity (partymix additions)")
