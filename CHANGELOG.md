@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Tool/resource/prompt behaviour unchanged (9 tools, 4 resources, 5 prompts).
   `MCP_USE_ANONYMIZED_TELEMETRY` is no longer needed and is removed from the
   generated `.mcp.json`. Dependency `mcp-use` replaced by `mcp>=1.12.0,<2.0.0`.
+- **Python 3.10+ now required** (was 3.8+). The native `mcp` SDK requires
+  Python >=3.10; the CI matrix and `python_requires` were bumped to match.
 - **First-run onboarding is now MCP-native.** The server `instructions` tell
   the assistant to detect a missing board on first contact, ask the user
   before setup, then run the local install and create the canonical 5-column

@@ -28,5 +28,5 @@ setup(
             "kanbanger-mcp=kanbanger_mcp.server:main",
         ],
     },
-    python_requires=">=3.8",
+    python_requires=">=3.10",
 )

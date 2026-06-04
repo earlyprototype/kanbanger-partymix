@@ -96,9 +96,9 @@ def _section(text):
 def check_python_version():
     label = "Python version"
     v = sys.version_info
-    if v < (3, 8):
-        _emit(FAIL_TAG, label, f"{v.major}.{v.minor} (need >= 3.8)",
-              "Install Python 3.8 or later")
+    if v < (3, 10):
+        _emit(FAIL_TAG, label, f"{v.major}.{v.minor} (need >= 3.10)",
+              "Install Python 3.10 or later")
     else:
         _emit(PASS_TAG, label, f"{v.major}.{v.minor}.{v.micro}")
 
