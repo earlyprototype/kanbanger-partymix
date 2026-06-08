@@ -3,8 +3,11 @@
 setup-venv.py — Provision a per-project Kanbanger MCP environment.
 
 Creates `<PROJECT>/.venv`, installs the partymix package editable into it,
-writes `<PROJECT>/.mcp.json` pinned to that venv's python.exe, and ensures
-`.venv/` is gitignored.
+writes `<PROJECT>/.mcp.json` pinned to that venv's python.exe, ensures
+`.venv/` is gitignored, and adds a Kanbanger onboarding stanza to
+`<PROJECT>/CLAUDE.md` so AI agents know to drive the board through the MCP
+tools (the always-loaded touchpoint the server's own instructions can't be,
+since they're only visible after the server has already launched).
 
 This is the cure for the v2.1.0/partymix `kanbanger_mcp` import collision:
 each project gets its own isolated kanbanger install, so there is no
@@ -30,6 +33,8 @@ from pathlib import Path
 PARTYMIX_SOURCE = Path(__file__).resolve().parent.parent
 GITIGNORE_ENTRY = ".venv/"
 GITIGNORE_HEADER = "# Per-project venv created by kanbanger-partymix/scripts/setup-venv.py"
+CLAUDE_MD_START = "<!-- kanbanger:start -->"
+CLAUDE_MD_END = "<!-- kanbanger:end -->"
 
 
 def venv_python_path(venv_dir: Path) -> Path:
@@ -76,6 +81,82 @@ def ensure_gitignore_has_venv(project_dir: Path) -> None:
         print(f"  created {gitignore} with {GITIGNORE_ENTRY}")
 
 
+def build_claude_md_block(project_dir: Path) -> str:
+    """The Kanbanger onboarding stanza injected into a project's CLAUDE.md.
+
+    This is the always-loaded, pre-launch touchpoint. The server's own
+    `instructions` string carries the same intent, but an LLM can't see it
+    until the server is already running -- so in a project where the MCP isn't
+    loaded yet, this stanza is the only thing telling the agent to (a) drive
+    the board through the MCP tools rather than hand-editing `_kanban.md`,
+    (b) keep the board project-scoped, and (c) how to recover when the
+    per-project venv isn't provisioned (e.g. on a fresh clone).
+    """
+    source = to_forward_slashes(PARTYMIX_SOURCE / "scripts" / "setup-venv.py")
+    project = to_forward_slashes(project_dir)
+    return f"""{CLAUDE_MD_START}
+## Kanbanger: task board for this project
+
+This project tracks work on a Kanban board managed by the **Kanbanger MCP
+server**. The board lives at `_kanban.md` in the project root and is
+**project-scoped** -- configured here via `.mcp.json` + `.venv`, not globally.
+Don't install or move Kanbanger to user/global scope; the board belongs to
+this project.
+
+**For AI agents:**
+- **Always use the Kanbanger MCP tools** (`list_tasks`, `add_task`, `move_task`,
+  `delete_task`, `sync_to_github`, `get_sync_status`) to read or change the
+  board. **Never hand-edit `_kanban.md`** -- direct edits bypass validation,
+  locking, and atomic writes and will eventually corrupt the board or its
+  GitHub sync.
+- On first contact, read the `kanban://current-board` resource before acting.
+- **REVIEW gates DONE.** AI-completed work goes to REVIEW via `propose_done`,
+  never straight to DONE; a human approves REVIEW -> DONE via `approve_done`.
+  Never move your own work directly to DONE.
+
+**If the Kanbanger tools aren't available** in this session, the per-project
+`.venv` is probably not provisioned on this machine (it's gitignored, so a
+fresh clone won't have it). Re-provision and restart the session:
+
+```
+python "{source}" "{project}"
+```
+{CLAUDE_MD_END}
+"""
+
+
+def ensure_claude_md_has_kanbanger(project_dir: Path) -> None:
+    """Idempotently add (or refresh) the Kanbanger stanza in <project>/CLAUDE.md.
+
+    - File absent          -> create it with the stanza.
+    - File present, no tag  -> append the stanza (existing content preserved).
+    - File present, tagged  -> replace the block between the markers, so a
+      re-run after a partymix upgrade refreshes the stanza without duplicating.
+    """
+    claude_md = project_dir / "CLAUDE.md"
+    block = build_claude_md_block(project_dir)
+    if not claude_md.exists():
+        claude_md.write_text(block, encoding="utf-8")
+        print(f"  created {claude_md} with the kanbanger stanza")
+        return
+
+    content = claude_md.read_text(encoding="utf-8")
+    if CLAUDE_MD_START in content and CLAUDE_MD_END in content:
+        start = content.index(CLAUDE_MD_START)
+        end = content.index(CLAUDE_MD_END) + len(CLAUDE_MD_END)
+        new_content = content[:start] + block.rstrip("\n") + content[end:]
+        if new_content != content:
+            claude_md.write_text(new_content, encoding="utf-8")
+            print(f"  refreshed the kanbanger stanza in {claude_md}")
+        else:
+            print(f"  kanbanger stanza in {claude_md} already up to date")
+        return
+
+    sep = "" if content.endswith("\n") else "\n"
+    claude_md.write_text(content + sep + "\n" + block, encoding="utf-8")
+    print(f"  appended kanbanger stanza to {claude_md}")
+
+
 def run(cmd, **kwargs):
     print(f"  $ {' '.join(str(c) for c in cmd)}")
     result = subprocess.run(cmd, **kwargs)
@@ -105,6 +186,11 @@ def main(argv=None) -> int:
         "--no-gitignore",
         action="store_true",
         help="Skip appending .venv/ to .gitignore.",
+    )
+    parser.add_argument(
+        "--no-claude-md",
+        action="store_true",
+        help="Skip adding the Kanbanger stanza to the project's CLAUDE.md.",
     )
     args = parser.parse_args(argv)
 
@@ -176,10 +262,15 @@ def main(argv=None) -> int:
         print("\nStep 6: ensuring .venv/ is gitignored")
         ensure_gitignore_has_venv(project_dir)
 
+    if not args.no_claude_md:
+        print("\nStep 7: adding the Kanbanger stanza to CLAUDE.md")
+        ensure_claude_md_has_kanbanger(project_dir)
+
     print("\nDone.")
     print("Next:")
     print(f"  - Open a fresh Claude Code session in {project_dir}")
     print("  - Confirm kanbanger MCP loads (paste '/mcp' or call list_tasks)")
+    print("  - CLAUDE.md now tells agents to use the MCP tools, not hand-edit the board")
     print("  - Run `kanban-doctor` (after Step 3 of MVP plan ports it to partymix)")
     return 0
 

@@ -1,396 +1,114 @@
-# LLM Guidance for Kanban Management
+# LLM Guidance — Using Kanbanger
 
-This document provides guidance for Large Language Models (LLMs) to help users create and manage markdown kanban files for kanban-project-sync.
+Kanbanger is an **MCP server**. If you are an AI assistant in a project that has
+Kanbanger configured, you manage the board by **calling the MCP tools** — not by
+editing `_kanban.md` by hand, and not by shelling out to a CLI.
 
-## Purpose
+This is the single most important rule, so it comes first:
 
-Enable LLMs to:
-- Create well-formatted kanban boards from user requests
-- Add/remove/move tasks intelligently
-- Maintain proper markdown structure
-- Suggest task organization and prioritization
+> **Always use the Kanbanger MCP tools. Never hand-edit `_kanban.md`.**
+> Direct edits bypass the server's validation, file locking, and atomic writes,
+> and they desync the board from its GitHub Project. The tools exist precisely so
+> you don't have to parse or rewrite the markdown yourself.
 
-## Markdown Kanban Format
+## The board is project-scoped
 
-### Basic Structure
+The board is `<workspace>/_kanban.md` for the **current project** — where
+`<workspace>` is the `KANBANGER_WORKSPACE` env var, or the project's working
+directory if that's unset. Each project gets its own Kanbanger install
+(`.venv` + `.mcp.json`). There is no single global board, and Kanbanger is not a
+user-level tool — don't install or relocate it to user/global scope. The board
+belongs to the project you're in.
+
+## First contact
+
+Before doing anything, read the `kanban://current-board` resource (or check for
+`_kanban.md` in the workspace) to see the current state.
+
+If `_kanban.md` does **not** exist, Kanbanger isn't set up in this project yet.
+Don't silently create it — tell the user and ask. If they agree, create the
+canonical 5-column board (see [Board format](#board-format-for-reference) below).
+
+## The tools
+
+| Tool | Use it to |
+|------|-----------|
+| `list_tasks(column?)` | Read the board (optionally filter to one column) |
+| `add_task(title, column, description?)` | Add a task |
+| `move_task(title, from_column, to_column)` | Move a task between columns |
+| `delete_task(title, column)` | Remove a task |
+| `propose_done(title)` | Move an AI-completed task to REVIEW (see gate below) |
+| `approve_done(title)` | Approve a REVIEW task to DONE (human action) |
+| `reject_review(title, reason)` | Send a REVIEW task back with feedback |
+| `sync_to_github(dry_run?)` | Push the board to its GitHub Project |
+| `get_sync_status()` | Check sync state |
+
+Read-only resources, always available: `kanban://current-board`,
+`kanban://stats`, `kanban://sync-status`.
+
+## The REVIEW gate — AI never marks its own work DONE
+
+The board has five columns: **BACKLOG → TODO → DOING → REVIEW → DONE.**
+
+REVIEW is the AI/human handoff gate. When you finish a task:
+
+1. Call `propose_done(title)` — this moves it to **REVIEW**, not DONE.
+2. A human (or a designated reviewer) verifies and calls `approve_done(title)`
+   → **DONE**, or `reject_review(title, reason)` to send it back for rework.
+
+**Never move your own work straight to DONE.** This contract is enforced by the
+tools, not just convention.
+
+## Board format (for reference)
+
+You rarely write this by hand — `add_task` does it for you — but when creating a
+board for the first time, use this exact shape:
 
 ```markdown
-# [Optional: Board Title]
+# <Project Name> Kanban
 
 ## BACKLOG
-*   [ ] Task that hasn't been started
-*   [ ] Another backlog item
+*   [ ] Future / unprioritised work
 
 ## TODO
-*   [ ] Task ready to be picked up
-*   [ ] High priority task
+*   [ ] Ready to start, prioritised
 
 ## DOING
-*   [ ] Task currently being worked on
+*   [ ] In progress (keep to 1-3 items)
 
 ## REVIEW
-*   [ ] Task an AI worker marked complete, awaiting human approval
+*   [ ] AI-completed work awaiting human approval
 
 ## DONE
-*   [x] Completed task (checked box, human-approved)
-*   [x] Another finished item
+*   [x] Completed, human-approved work
 ```
 
-### Strict Requirements
-
-1. **Column Headers:** Must be level 2 headers (`## `)
-2. **Task Format:** Must use `*   [ ]` or `*   [x]` (asterisk + 3 spaces + checkbox)
-3. **Status Indicators:**
-   - Unchecked: `[ ]` for active tasks
-   - Checked: `[x]` for completed tasks (only in DONE column)
-4. **Column Names:** Case-insensitive but must match:
-   - `BACKLOG` → Maps to "Backlog" status
-   - `TODO` or `TO DO` → Maps to "Todo" status
-   - `DOING` or `IN PROGRESS` → Maps to "InProgress" status
-   - `REVIEW` → Maps to "Review" status (the REVIEW gate — see §REVIEW Gate Semantics)
-   - `DONE` or `COMPLETE` → Maps to "Done" status
-
-**GitHub Projects setup:** the linked GitHub Project's Status field must have all five options (case-sensitive) for sync to assign the right status. If `Review` is missing on the Project, sync will create REVIEW items with no Status and emit a warning until the option is added.
-
-## REVIEW Gate Semantics
-
-The REVIEW column is **the platform's gate primitive for AI/human collaboration**. AI workers move tasks to REVIEW when they believe the work is complete; humans (or reviewer agents) move REVIEW → DONE after verifying. This contract is enforced by the MCP `propose_done` / `approve_done` / `reject_review` tools.
-
-When syncing to GitHub Projects, REVIEW items map to a `Review` Status option. The GH Project's Status field must include `Review` (case-sensitive) for sync to assign the status; otherwise items land with no Status and the sync warns until the option is added.
-
-Rule of thumb: **AI agents never move work directly to DONE** — they move it to REVIEW; humans approve REVIEW → DONE.
-
-### Optional Elements
-
-- Numbered headers: `## 1. BACKLOG` (numbers ignored)
-- Board title: `# Project Kanban Board` at top
-- Empty columns: Allowed
-- Blank lines: Ignored
-
-## LLM Instructions
-
-### When User Says: "Create a kanban board for [project]"
-
-1. **Understand the context:** Ask clarifying questions about:
-   - What tasks need to be tracked?
-   - What's the priority?
-   - What's the current status of work?
-
-2. **Generate board:** Create with realistic task distribution:
-   ```markdown
-   # [Project Name] Kanban
-
-   ## BACKLOG
-   *   [ ] Future tasks
-   *   [ ] Nice-to-have features
-
-   ## TODO
-   *   [ ] High priority items
-   *   [ ] Ready to start
-
-   ## DOING
-   *   [ ] Currently active (1-3 items max for focus)
-
-   ## REVIEW
-   *   [ ] AI-completed work awaiting human approval
-
-   ## DONE
-   *   [x] Recently completed (human-approved)
-   ```
-
-3. **Best practices:**
-   - Limit DOING to 1-3 items (avoid multitasking)
-   - Prioritize TODO by putting important tasks first
-   - Keep tasks specific and actionable
-   - Use clear, concise language
-
-### When User Says: "Add task to [column]"
-
-```markdown
-## [COLUMN NAME]
-*   [ ] Existing task
-*   [ ] New task added here  ← Add at bottom of section
-```
-
-### When User Says: "Move [task] to [column]"
-
-1. Find the task by title (exact or fuzzy match)
-2. Remove from current column
-3. Add to target column
-4. Update checkbox status:
-   - Moving TO Done → Change `[ ]` to `[x]`
-   - Moving FROM Done → Change `[x]` to `[ ]`
-
-### When User Says: "Mark [task] as done"
-
-1. Find task in any column
-2. Move to DONE section
-3. Change checkbox to `[x]`
-
-### When User Says: "Delete [task]"
-
-Simply remove the line from the markdown file.
-
-## Task Writing Guidelines
-
-### Good Task Titles
-
-✅ **Specific and actionable:**
-- "Implement user authentication API"
-- "Fix bug in payment processing"
-- "Write documentation for deployment"
-- "Review PR #123"
-
-✅ **Clear scope:**
-- "Design database schema for users table"
-- "Add error handling to file upload"
-
-### Poor Task Titles
-
-❌ **Too vague:**
-- "Work on authentication"
-- "Fix stuff"
-- "Documentation"
-
-❌ **Too broad:**
-- "Build entire frontend"
-- "Implement all features"
-
-❌ **Not actionable:**
-- "Think about design"
-- "Maybe refactor later"
-
-## Example Interactions
-
-### Example 1: Create Board
-
-**User:** "Create a kanban board for my web scraper project"
-
-**LLM Response:**
-```markdown
-# Web Scraper Kanban
-
-## BACKLOG
-*   [ ] Add support for JavaScript-rendered pages
-*   [ ] Implement rate limiting
-*   [ ] Add proxy rotation
-*   [ ] Create CLI interface
-
-## TODO
-*   [ ] Set up project structure
-*   [ ] Implement basic HTTP requests
-*   [ ] Add HTML parsing with BeautifulSoup
-
-## DOING
-*   [ ] Design data extraction pipeline
-
-## DONE
-*   [x] Research scraping libraries
-*   [x] Define project requirements
-```
-
-### Example 2: Add Task
-
-**User:** "Add 'implement retry logic' to TODO"
-
-**LLM:** Reads current file, adds to TODO section:
-```markdown
-## TODO
-*   [ ] Set up project structure
-*   [ ] Implement basic HTTP requests
-*   [ ] Add HTML parsing with BeautifulSoup
-*   [ ] Implement retry logic
-```
-
-### Example 3: Move Task
-
-**User:** "Move 'Design data extraction pipeline' to Done"
-
-**LLM:** 
-1. Find in DOING: `*   [ ] Design data extraction pipeline`
-2. Remove from DOING
-3. Add to DONE with checked box:
-```markdown
-## DOING
-
-## DONE
-*   [x] Research scraping libraries
-*   [x] Define project requirements
-*   [x] Design data extraction pipeline
-```
-
-### Example 4: Reorganize
-
-**User:** "The TODO list is too long, move some items to backlog"
-
-**LLM:** Analyze priorities, move lower-priority items:
-```markdown
-## BACKLOG
-*   [ ] Add support for JavaScript-rendered pages
-*   [ ] Implement rate limiting
-*   [ ] Add proxy rotation
-*   [ ] Create CLI interface
-*   [ ] Add HTML parsing with BeautifulSoup  ← Moved
-
-## TODO
-*   [ ] Set up project structure
-*   [ ] Implement basic HTTP requests
-```
-
-## Integration with Sync Tool
-
-After editing the kanban file, remind users to sync:
-
-```bash
-# Preview changes
-kanban-sync _kanban.md --dry-run
-
-# Apply changes to GitHub
-kanban-sync _kanban.md
-```
-
-## Common Patterns
-
-### Sprint Planning
-```markdown
-## BACKLOG
-*   [ ] All discovered work
-
-## TODO
-*   [ ] Sprint goals (prioritized)
-*   [ ] High value items
-
-## DOING
-*   [ ] Current sprint work (WIP limit: 3)
-
-## DONE
-*   [x] Completed this sprint
-```
-
-### Bug Tracking
-```markdown
-## BACKLOG
-*   [ ] Minor bugs
-*   [ ] Known issues
-
-## TODO
-*   [ ] P1: Critical bugs
-*   [ ] P2: High priority bugs
-
-## DOING
-*   [ ] Currently investigating
-
-## DONE
-*   [x] Fixed and verified
-```
-
-### Feature Development
-```markdown
-## BACKLOG
-*   [ ] Feature ideas
-*   [ ] User requests
-
-## TODO
-*   [ ] Approved features
-*   [ ] Next milestone items
-
-## DOING
-*   [ ] In development
-
-## DONE
-*   [x] Shipped features
-```
-
-## Validation Checklist
-
-Before finalizing edits, verify:
-
-- [ ] All columns use `## ` headers
-- [ ] All tasks use `*   [ ]` or `*   [x]` format
-- [ ] Column names are BACKLOG, TODO, DOING, REVIEW, or DONE
-- [ ] Only DONE tasks have `[x]` checkboxes
-- [ ] Task titles are clear and actionable
-- [ ] No duplicate task titles (causes sync issues)
-
-## Advanced: Batch Operations
-
-When user requests multiple changes:
-
-**User:** "I finished these three tasks: task A, task B, task C"
-
-**LLM:** Atomically move all three:
-1. Find each task
-2. Move to DONE
-3. Mark as complete
-4. Present updated file
-
-## Error Prevention
-
-### Avoid These Mistakes
-
-❌ **Wrong checkbox format:**
-```markdown
-* [ ] Task   ← Missing spaces
-*  [ ] Task  ← Wrong number of spaces
-* [x ] Task  ← Space in wrong place
-```
-
-✅ **Correct format:**
-```markdown
-*   [ ] Task
-*   [x] Task
-```
-
-❌ **Wrong header level:**
-```markdown
-# TODO        ← Level 1 (too high)
-### TODO      ← Level 3 (too low)
-```
-
-✅ **Correct:**
-```markdown
-## TODO
-```
-
-## Tips for LLMs
-
-1. **Preserve existing content:** When editing, don't remove tasks unless explicitly asked
-2. **Maintain order:** Keep chronological order in DONE (newest at bottom)
-3. **Ask for clarification:** If task name is ambiguous, confirm with user
-4. **Suggest improvements:** Offer to break down large tasks or reorganize
-5. **Remind about sync:** After edits, remind user to run `kanban-sync`
-
-## Sample Prompts for Users
-
-Share these with users to get the most from LLM assistance:
-
-- "Create a kanban board for my [project type] project"
-- "Add these tasks to my backlog: [list]"
-- "I finished [task], mark it as done"
-- "Move [task] from TODO to DOING"
-- "Reorganize my TODO list by priority"
-- "Break down [large task] into smaller tasks"
-- "Show me what tasks are currently in progress"
-- "Suggest what I should work on next"
-
-## Tool Integration
-
-LLMs can help users by:
-1. **Creating/editing** the markdown file
-2. **Explaining** what will happen when synced
-3. **Previewing** the dry-run output
-4. **Troubleshooting** sync errors
-
-**Example workflow:**
-```
-User: "Add task X to TODO"
-LLM:  [Edits _kanban.md]
-      "Added! Run 'kanban-sync _kanban.md' to sync to GitHub."
-User: "Can you preview what will happen?"
-LLM:  [Runs dry-run]
-      "This will create 1 new task in the Todo column on GitHub."
-```
-
-## Conclusion
-
-With proper guidance, LLMs can be powerful kanban management assistants, making it natural to maintain project boards through conversation while keeping everything in sync with GitHub Projects.
+Format rules the parser enforces:
+
+- Columns are level-2 headers (`## `).
+- Tasks are `*   [ ]` (asterisk + three spaces + checkbox); `[x]` only in DONE.
+- Column names (case-insensitive): `BACKLOG`, `TODO` / `TO DO`,
+  `DOING` / `IN PROGRESS`, `REVIEW`, `DONE` / `COMPLETE`.
+- Keep titles unique — duplicate titles break sync and exact-title tool matching.
+
+## Writing good tasks
+
+- **Specific and actionable:** "Implement user authentication API", not "Work on auth".
+- One clear deliverable per task; break big tasks down before adding them.
+- Keep DOING to 1-3 items so focus stays real.
+- If a title is ambiguous, confirm with the user before adding.
+
+## GitHub sync
+
+Preview with `sync_to_github(dry_run=True)`, then push with `sync_to_github()`.
+The linked GitHub Project's Status field must have all five options
+(`Backlog` / `Todo` / `InProgress` / `Review` / `Done`, case-sensitive), or
+REVIEW items land with no status. Sync is one-way: local markdown → GitHub.
+
+## If the tools aren't there
+
+If you don't see the Kanbanger tools in this session but the project has a
+`.mcp.json` referencing kanbanger, the per-project `.venv` probably isn't
+provisioned on this machine (it's gitignored, so fresh clones won't have it).
+Tell the user to run `python <partymix>/scripts/setup-venv.py` from the project
+root and restart the session. **Don't fall back to hand-editing the board.**

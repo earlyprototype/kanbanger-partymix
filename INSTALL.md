@@ -40,6 +40,11 @@ the right kanbanger.
    - `args` = `["-m", "kanbanger_mcp"]`
    - `env` block with `KANBANGER_WORKSPACE` and GitHub credentials slots
 6. Appends `.venv/` to `.gitignore` (creating the file if missing).
+7. Adds a Kanbanger onboarding stanza to `<project>/CLAUDE.md` (idempotent —
+   created if missing, appended if the file exists without it, refreshed in
+   place if already present). This is the always-loaded touchpoint that tells
+   AI agents to drive the board through the MCP tools and keep it project-scoped.
+   Skip with `--no-claude-md`.
 
 If `.mcp.json` already exists in the target project, it is backed up to
 `.mcp.json.backup` before being overwritten.
