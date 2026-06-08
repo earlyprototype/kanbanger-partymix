@@ -141,16 +141,24 @@ def ensure_claude_md_has_kanbanger(project_dir: Path) -> None:
         return
 
     content = claude_md.read_text(encoding="utf-8")
-    if CLAUDE_MD_START in content and CLAUDE_MD_END in content:
-        start = content.index(CLAUDE_MD_START)
-        end = content.index(CLAUDE_MD_END) + len(CLAUDE_MD_END)
-        new_content = content[:start] + block.rstrip("\n") + content[end:]
-        if new_content != content:
-            claude_md.write_text(new_content, encoding="utf-8")
-            print(f"  refreshed the kanbanger stanza in {claude_md}")
+    start_idx = content.find(CLAUDE_MD_START)
+    if start_idx != -1:
+        end_idx = content.find(CLAUDE_MD_END, start_idx + len(CLAUDE_MD_START))
+        if end_idx != -1:
+            end_idx += len(CLAUDE_MD_END)
+            new_content = content[:start_idx] + block.rstrip("\n") + content[end_idx:]
+            if new_content != content:
+                claude_md.write_text(new_content, encoding="utf-8")
+                print(f"  refreshed the kanbanger stanza in {claude_md}")
+            else:
+                print(f"  kanbanger stanza in {claude_md} already up to date")
+            return
         else:
-            print(f"  kanbanger stanza in {claude_md} already up to date")
-        return
+            print(f"  found orphan start marker in {claude_md}, replacing from that point")
+            new_content = content[:start_idx] + block
+            claude_md.write_text(new_content, encoding="utf-8")
+            print(f"  replaced orphan stanza in {claude_md}")
+            return
 
     sep = "" if content.endswith("\n") else "\n"
     claude_md.write_text(content + sep + "\n" + block, encoding="utf-8")
