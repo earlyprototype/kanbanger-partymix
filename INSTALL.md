@@ -2,50 +2,79 @@
 
 ## TL;DR
 
+Once per machine:
+
 ```
-python C:\Users\Fab2\Desktop\AI\_tools\kanbanger-partymix\scripts\setup-venv.py
+pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git
 ```
 
-(Adjust the path to wherever you cloned this repo.) Run that command from
-any project's root directory. It creates `.venv/`, installs partymix into
-it, writes `.mcp.json` pointed at that venv, and gitignores `.venv/`.
+Once per project, from the project's root directory:
+
+```
+kanbanger init
+```
 
 Then open a fresh Claude Code session in that project. The kanbanger MCP
-server should load automatically.
+server loads via the project's `.mcp.json`.
 
-## Why a per-project venv?
+(Not on PyPI yet — install from git or a local clone for now. Plain `pip`
+and `uv tool install` work the same way if you don't use pipx.)
 
-The original `kanban-project-sync` (v2.1.0, source at `_kanbanger/`)
-used the importable module name `kanbanger_mcp`. This repo (`kanbanger-partymix`)
-has been renamed to `kanbanger` (see ADR 0002). A per-project venv is still
-supported for projects that need isolation from other Python installs.
+## The model: install once, provision per project
 
-A per-project venv solves the collision by isolating each project's
-kanbanger install. The project's `.mcp.json` pins an absolute path to its
-own venv's `python.exe`, so Claude Code (or any MCP client) always spawns
-the right kanbanger.
+ADR 0002 separates the concerns that the old installer fused together:
 
-## What the script does
+1. **Install** — once, globally, like any other MCP server. This puts four
+   commands on PATH: `kanbanger-mcp` (the MCP server), `kanbanger` (CLI,
+   currently `kanbanger init`), `kanban-sync`, and `kanban-doctor`.
+2. **Register** — each project's `.mcp.json` points at the global
+   `kanbanger-mcp` command. Provisioning writes it for you.
+3. **Provision** — once per project: scaffold the board and wire the
+   touchpoints. Lightweight and idempotent.
+4. **Bind** — at runtime the server resolves the project's own `_kanban.md`,
+   so boards never mix.
 
-1. `python -m venv <project>/.venv`
-2. `<venv>/python -m pip install --upgrade pip`
-3. `<venv>/python -m pip install -e <partymix-source>[mcp]`
-4. Verifies that `import kanbanger` in the venv resolves to the
-   partymix source.
-5. Writes `<project>/.mcp.json` with:
-   - `command` = absolute path to `<venv>/Scripts/python.exe` (Windows)
-     or `<venv>/bin/python` (Unix)
-   - `args` = `["-m", "kanbanger"]`
-   - `env` block with `KANBANGER_WORKSPACE` and GitHub credentials slots
-6. Appends `.venv/` to `.gitignore` (creating the file if missing).
-7. Adds a Kanbanger onboarding stanza to `<project>/CLAUDE.md` (idempotent —
-   created if missing, appended if the file exists without it, refreshed in
-   place if already present). This is the always-loaded touchpoint that tells
-   AI agents to drive the board through the MCP tools and keep it project-scoped.
-   Skip with `--no-claude-md`.
+There is no per-project venv. The old per-project-venv flow existed only to
+dodge the v2 `kanbanger_mcp` module-name collision; the v3 rename to
+`kanbanger` removed the cause (see "Deprecated" below).
 
-If `.mcp.json` already exists in the target project, it is backed up to
-`.mcp.json.backup` before being overwritten.
+## Install (once per machine)
+
+pipx is recommended — isolated install, commands on PATH:
+
+```
+pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git
+```
+
+From a local clone instead:
+
+```
+pipx install C:/path/to/kanbanger-partymix
+```
+
+Plain `pip install` (or `uv tool install`) of either form works too.
+
+## Provision (once per project)
+
+Two equivalent paths — both run the exact same provisioning code:
+
+- **CLI:** from the project root, run `kanbanger init`
+- **In-session:** if the kanbanger MCP server is already available, ask the
+  assistant to run the `setup_project` tool. (On first contact with an
+  unprovisioned project, the assistant offers this itself.)
+
+What provisioning writes — idempotent, safe to re-run:
+
+1. `_kanban.md` — the canonical 5-column board
+   (BACKLOG → TODO → DOING → REVIEW → DONE). Scaffolded only if absent;
+   **an existing board is never modified**.
+2. `.mcp.json` — wires the project to the global `kanbanger-mcp` command,
+   with empty `${VAR:-}` GitHub-sync placeholders. Left untouched if the
+   project already has one.
+3. `CLAUDE.md` — the Kanbanger agent touchpoint stanza (created, appended,
+   or refreshed in place between its markers). `AGENTS.md` gets the same
+   stanza only if that file already exists.
+4. `.gitignore` — ensures a stray `.venv/` stays out of version control.
 
 ## Credentials
 
@@ -84,58 +113,55 @@ you set the encoding in the Save As dialog.
 
 ## Verifying the install
 
-After the script finishes, in the project's `.venv`:
-
 ```
-.venv\Scripts\python -c "import kanbanger; print(kanbanger.__file__)"
+kanban-doctor
 ```
 
-Expected output:
+reports the state of the install, board, and sync config. For a quick
+PATH check, `kanbanger-mcp --help` (or `pipx list`) should resolve the
+global install.
+
+## Upgrading / Uninstalling
 
 ```
-<partymix-source>\kanbanger\__init__.py
+pipx upgrade kanbanger-partymix     # pull the latest from the install source
+pipx uninstall kanbanger-partymix   # remove the global install
 ```
 
-If the file path is anywhere else (e.g. `site-packages` or another
-project's `.venv`), the install pointed at the wrong source. Re-run
-`setup-venv.py` from a fresh shell.
+Provisioned files (`_kanban.md`, `.mcp.json`, the `CLAUDE.md` stanza) are
+project-local — delete them per project if you want them gone. Your board
+data only ever lives in the project.
 
-(Step 3 of the MVP plan ports `kanban-doctor` to partymix — once that
-lands, run `kanban-doctor` for a richer preflight check.)
+## What provisioning does NOT do
 
-## Uninstalling
+- It does not write secrets anywhere. The GitHub slots in `.mcp.json` are
+  empty `${VAR:-}` placeholders; you supply real values via the
+  environment or `.claude/settings.local.json`.
+- It does not configure GitHub Projects V2 sync. That's a separate step
+  (set `GITHUB_PROJECT_NUMBER` and link a project to the repo).
+- It does not migrate or modify existing `_kanban.md` data — an existing
+  board is left byte-for-byte intact.
 
-Delete the project's `.venv/` directory. That's it — the install is
-local to the project.
+## Deprecated: per-project venvs (`scripts/setup-venv.py`)
 
-## What this does NOT do
-
-- It does not install partymix system-wide. Each project's venv is
-  independent. If you want partymix available globally, install it
-  manually with `pip install -e .[mcp]` from the partymix root.
-- It does not write `.claude/settings.local.json` (secrets). You do
-  that once per project, manually.
-- It does not configure GitHub Projects V2 sync. That's a separate
-  step (set `GITHUB_PROJECT_NUMBER` and link a project to the repo).
-- It does not migrate existing `_kanban.md` data. Boards are
-  per-project; the script doesn't touch your kanban file.
+Older revisions installed kanbanger into a `.venv` inside every project via
+`scripts/setup-venv.py`. That flow is **deprecated**: the script no longer
+installs anything and survives only as a thin shim over the same
+provisioning code that `kanbanger init` uses. Don't use it for new setups;
+if an old project still has a kanbanger `.venv`, delete it and re-point the
+project at the global install with `kanbanger init` (move your `.mcp.json`
+aside first so the fresh one can be written).
 
 ## Troubleshooting
 
-**"ERROR: partymix source not found"** — The script computes its own
-location and looks for `setup.py` in the parent directory. If you moved
-or renamed `scripts/`, fix it back.
+**"MCP tools not showing in my session"** — Is kanbanger installed on this
+machine (`pipx list`)? Is the project provisioned (`.mcp.json` present)?
+Restart Claude Code after any `.mcp.json` change, then run `kanban-doctor`.
 
-**"Could not import kanbanger in the venv"** — The `pip install`
-failed silently. Re-run with `--quiet` removed from the script for a
-verbose trace.
+**"`kanbanger-mcp` not found" when the server should spawn** — The global
+install isn't on PATH. With pipx, run `pipx ensurepath` and restart your
+shell/IDE.
 
-**".mcp.json is loaded but server reports 'not connected'"** —
-Usually means the venv's python has a broken dependency. Activate the
-venv manually and run `python -m kanbanger --help` to see the real
-error.
-
-**"I want to use the same venv for multiple projects"** — Don't.
-The whole point is per-project isolation; this lets you have different
-versions of partymix on different projects, and keeps Phase 1+
-development independent of dogfood.
+**".mcp.json is loaded but server reports 'not connected'"** — Run
+`kanbanger-mcp --help` in a terminal to surface the real error (usually a
+broken dependency).
