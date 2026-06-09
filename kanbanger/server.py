@@ -8,7 +8,6 @@ for LLM-assisted kanban management.
 import os
 import sys
 import argparse
-from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from .tools import register_tools
@@ -133,10 +132,13 @@ def main():
     )
     args = parser.parse_args()
     
-    # Validate workspace
-    # S2: resolve to absolute canonical path so `..` segments and
-    # symlinks collapse predictably regardless of the process cwd.
-    workspace = str(Path(os.getenv("KANBANGER_WORKSPACE", os.getcwd())).resolve())
+    # Validate workspace via the ADR 0002 binding precedence (env pin >
+    # walk-up discovery > cwd fallback) — the SAME resolution the tools and
+    # resources use, so startup validation, the REVIEW-column migration
+    # below, and every later tool call all target one and the same board.
+    # S2 property preserved: absolute canonical path, symlinks collapsed.
+    from .binding import resolve_workspace
+    workspace = str(resolve_workspace())
     kanban_path = os.path.join(workspace, "_kanban.md")
     
     if not os.path.exists(kanban_path):

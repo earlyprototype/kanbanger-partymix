@@ -10,8 +10,14 @@ Provisioning is the LIGHTWEIGHT, per-project half (distinct from INSTALL, which
 is a single global `pipx install` — see ADR 0002). It writes only project-local
 files and is safe to re-run:
 
-  * `_kanban.md`        — the board, canonical 5-column schema. Scaffolded only
-                          if absent; an existing board is NEVER clobbered.
+  * `_kanban.md`        — the board, canonical 5-column schema, with a stable
+                          board key minted into it (ADR 0002 collision-proof
+                          binding). Scaffolded only if absent. An existing
+                          board is NEVER clobbered, with ONE sanctioned
+                          additive exception: a board lacking a key gets the
+                          single `<!-- kanbanger:board-id: ... -->` marker
+                          comment inserted under its title — every other byte
+                          preserved.
   * `CLAUDE.md`         — the always-loaded agent touchpoint stanza (and
                           `AGENTS.md` likewise) telling agents to drive the
                           board via the MCP tools and never hand-edit it.
@@ -31,6 +37,14 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
+
+from kanban_io import (
+    atomic_write_text,
+    extract_board_key,
+    insert_board_key,
+    kanban_lock,
+    mint_board_key,
+)
 
 # ---------------------------------------------------------------------------
 # Constants (single home — previously duplicated in scripts/setup-venv.py)
@@ -365,26 +379,61 @@ def _default_project_name(project_dir: Path) -> str:
 
 
 def scaffold_kanban_board(project_dir: Path, result: ProvisionResult | None = None) -> None:
-    """Create `_kanban.md` with the canonical schema IF it does not exist.
+    """Create `_kanban.md` if absent, and ensure it carries a minted board key.
 
-    Hard rule: an existing board is NEVER clobbered — it's reported as
-    already-present and left byte-for-byte intact. This is the first-contact
-    scaffold only; it does NOT mint any in-board binding key (that's a separate
-    concern, issue #15 step 4).
+    Board-content rules (ADR 0002, issue #15 step 4 — collision-proof
+    binding):
+
+      * Board ABSENT  -> scaffold the canonical 5-column schema with a
+        freshly minted board key (`<!-- kanbanger:board-id: ... -->`)
+        directly under the title. Reported as created.
+      * Board PRESENT, NO key -> the ONE sanctioned modification of an
+        existing board: additively insert the single board-key marker
+        comment under the title. Every other byte is preserved (read raw,
+        no newline translation, atomic write under the kanban lock).
+        Reported as updated ("minted board key").
+      * Board PRESENT, key already minted -> untouched byte-for-byte,
+        reported as already-present.
+
+    Idempotent: the key is minted at most once, so re-runs are no-ops and
+    the key is stable for the board's lifetime (it IS the board's identity
+    — see kanbanger.binding).
     """
     board_path = project_dir / KANBAN_FILENAME
-    if board_path.exists():
+    if not board_path.exists():
+        board = build_kanban_board(_default_project_name(project_dir))
+        board_key = mint_board_key()
+        board_path.write_text(insert_board_key(board, board_key), encoding="utf-8")
         if result is not None:
-            result.already_present.append(
-                f"{KANBAN_FILENAME} (board already exists — NOT modified)"
+            result.created.append(
+                f"{KANBAN_FILENAME} (canonical 5-column board: "
+                "BACKLOG -> TODO -> DOING -> REVIEW -> DONE; "
+                f"board key {board_key} minted)"
             )
         return
-    board = build_kanban_board(_default_project_name(project_dir))
-    board_path.write_text(board, encoding="utf-8")
+
+    # Existing board: mint the key additively if (and only if) it is
+    # missing. Lock + atomic write because this board may be live under a
+    # running MCP server. Raw bytes in, raw bytes out (newline="") so the
+    # original content round-trips exactly regardless of CRLF/LF style.
+    with kanban_lock(str(project_dir)):
+        text = board_path.read_bytes().decode("utf-8")
+        existing_key = extract_board_key(text)
+        if existing_key is not None:
+            if result is not None:
+                result.already_present.append(
+                    f"{KANBAN_FILENAME} (board already exists — NOT modified; "
+                    f"board key already minted)"
+                )
+            return
+        board_key = mint_board_key()
+        atomic_write_text(
+            str(board_path), insert_board_key(text, board_key), newline=""
+        )
     if result is not None:
-        result.created.append(
-            f"{KANBAN_FILENAME} (canonical 5-column board: "
-            "BACKLOG -> TODO -> DOING -> REVIEW -> DONE)"
+        result.updated.append(
+            f"{KANBAN_FILENAME} (minted board key {board_key} — one marker "
+            "comment added under the title; all other content preserved)"
         )
 
 

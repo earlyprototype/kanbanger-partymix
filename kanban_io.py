@@ -6,14 +6,22 @@ Audit-driven foundation for tools.py mutations:
 - R2: kanban_lock (msvcrt on Windows, fcntl on POSIX) — stdlib only.
 - D1: state-file read/update/remove helpers used under the same lock as
   markdown writes so the kanban + sidecar pair stay coherent across crashes.
+- ADR 0002 (issue #15 step 4): board identity key primitives (mint /
+  extract / insert / read). They live HERE — not in kanbanger.binding —
+  for the same reason parse_task_title_with_description does (D8):
+  sync_kanban (a root module) needs them too, and importing the
+  `kanbanger` package from sync_kanban would drag the mcp SDK into a
+  module that is otherwise runnable with just requests + dotenv.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tempfile
+import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator, Optional, Tuple
@@ -22,6 +30,108 @@ from typing import Iterator, Optional, Tuple
 _LOCK_FILENAME = ".kanban.lock"
 _STATE_FILENAME = ".kanban.json"
 _KANBAN_FILENAME = "_kanban.md"
+
+
+# ---------------------------------------------------------------------------
+# Board identity key (ADR 0002, issue #15 step 4)
+#
+# A board's identity is a stable ID MINTED INTO THE BOARD FILE at provision
+# time — never the folder path (breaks on move/clone) and never a
+# name-derived key (ADR 0002 non-goals). The key rides in an HTML comment
+# directly under the board title, so it is invisible to humans reading the
+# rendered markdown and ignored by every board parser (task lines start
+# with `*`, column headers with `## ` — a `<!-- ... -->` line is neither).
+#
+# Marker shape (one line):   <!-- kanbanger:board-id: <key> -->
+# Namespace matches the existing `<!-- kanbanger:start/end -->` touchpoint
+# markers in kanbanger.provision.
+# ---------------------------------------------------------------------------
+
+# Tolerant reader: accept 8-64 chars of [A-Za-z0-9-] so hand-pasted dashed
+# UUIDs (and future key formats) still read back; the canonical minted form
+# is uuid4().hex (32 lowercase hex chars). The length floor stops the reader
+# from latching onto arbitrary short junk in a lookalike comment.
+_BOARD_KEY_RE = re.compile(
+    r"^\s*<!--\s*kanbanger:board-id:\s*([0-9A-Za-z-]{8,64})\s*-->\s*$"
+)
+
+
+def mint_board_key() -> str:
+    """Return a freshly minted board key: uuid4 as 32 lowercase hex chars.
+
+    uuid4 gives 122 bits of randomness — collision-proof for board identity
+    without any registry. The undashed hex form is a single regex-friendly
+    token; a shortened form would save nothing (the marker is an invisible
+    comment) while weakening the collision guarantee.
+    """
+    return uuid.uuid4().hex
+
+
+def format_board_key_marker(board_key: str) -> str:
+    """Render the single-line HTML-comment marker carrying `board_key`."""
+    return f"<!-- kanbanger:board-id: {board_key} -->"
+
+
+def extract_board_key(text: str) -> Optional[str]:
+    """Return the board key found in `text`, or None if no marker present.
+
+    Old boards without a key keep working everywhere — None simply means
+    "unkeyed", never an error. First marker wins if several are present.
+    """
+    for line in text.splitlines():
+        match = _BOARD_KEY_RE.match(line)
+        if match:
+            return match.group(1)
+    return None
+
+
+def read_board_key(board_path) -> Optional[str]:
+    """Extract the board key from the board file at `board_path`.
+
+    Returns None for: missing file, unreadable file, undecodable file, or a
+    readable board that simply has no marker. Resolution must never crash on
+    a sick board file — the board operations themselves surface read errors
+    through their own structured-error paths.
+    """
+    try:
+        text = Path(board_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    return extract_board_key(text)
+
+
+def insert_board_key(text: str, board_key: str) -> str:
+    """Insert the board-key marker into board `text`; pure, byte-preserving.
+
+    Placement: directly under the FIRST `# ` title line; at the very top if
+    the board has no title line. Every existing byte of `text` is preserved
+    — the only change is the one inserted marker line (terminated with the
+    file's own newline style, CRLF or LF, so a CRLF board stays uniformly
+    CRLF). The caller is responsible for checking the text is not already
+    keyed (extract_board_key) — this function inserts unconditionally.
+    """
+    marker = format_board_key_marker(board_key)
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return marker + "\n"
+
+    newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
+    insert_at = 0
+    for i, line in enumerate(lines):
+        # lstrip a BOM (U+FEFF escape below) so a BOM-prefixed title still
+        # counts as the title.
+        if line.lstrip("﻿").startswith("# "):
+            insert_at = i + 1
+            break
+
+    if insert_at > 0 and not lines[insert_at - 1].endswith(("\n", "\r")):
+        # Title is the last line and unterminated: terminate it, then add
+        # the marker WITHOUT a trailing newline — purely additive, the
+        # original's no-trailing-newline shape is preserved.
+        lines.insert(insert_at, newline + marker)
+    else:
+        lines.insert(insert_at, marker + newline)
+    return "".join(lines)
 
 
 def discover_columns(workspace: str) -> list:
@@ -128,7 +238,12 @@ def parse_task_title_with_description(
     return title, None
 
 
-def atomic_write_text(path: str, content: str, encoding: str = "utf-8") -> None:
+def atomic_write_text(
+    path: str,
+    content: str,
+    encoding: str = "utf-8",
+    newline: Optional[str] = None,
+) -> None:
     """Write text to path atomically.
 
     Pattern: write to a sibling tempfile in the same directory, fsync the
@@ -136,6 +251,12 @@ def atomic_write_text(path: str, content: str, encoding: str = "utf-8") -> None:
     atomic at the filesystem level (Windows since Python 3.3, POSIX always)
     when both paths are on the same volume — placing the tempfile alongside
     the target guarantees that.
+
+    `newline` is passed straight to open(): the default None keeps the
+    historical behavior (\\n translated to the platform line separator);
+    pass "" for no translation when the content's own line endings must be
+    preserved byte-for-byte (e.g. the board-key mint into an existing
+    board, ADR 0002).
     """
     target_dir = os.path.dirname(os.path.abspath(path)) or "."
     fd, tmp_path = tempfile.mkstemp(
@@ -143,7 +264,7 @@ def atomic_write_text(path: str, content: str, encoding: str = "utf-8") -> None:
         dir=target_dir,
     )
     try:
-        with os.fdopen(fd, "w", encoding=encoding) as f:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as f:
             f.write(content)
             f.flush()
             os.fsync(f.fileno())
@@ -219,11 +340,17 @@ def read_state(workspace: str) -> dict:
     """Read .kanban.json if present; return default schema if absent.
 
     Schema matches sync_kanban.StateManager:
-        {"repo_node_id": None, "project_id": None, "tasks": {...}}
+        {"repo_node_id": None, "project_id": None, "board_key": None,
+         "tasks": {...}}
     """
     path = state_path(workspace)
     if not os.path.exists(path):
-        return {"repo_node_id": None, "project_id": None, "tasks": {}}
+        return {
+            "repo_node_id": None,
+            "project_id": None,
+            "board_key": None,
+            "tasks": {},
+        }
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 

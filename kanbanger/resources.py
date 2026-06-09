@@ -10,10 +10,11 @@ import json
 import time
 import urllib.request
 import urllib.error
-from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from kanban_io import discover_columns
+
+from .binding import resolve_workspace
 
 
 # O3 reachability cache: maps token-suffix (last 6 chars; never the
@@ -82,13 +83,14 @@ def _check_github_reachable(token: str) -> bool:
 
 
 def get_workspace() -> str:
-    """Get the current workspace directory.
+    """Get the current workspace directory (ADR 0002 binding precedence).
 
-    S2: returns an absolute canonical path. `Path.resolve()` collapses
-    `..` segments and symlinks so a `KANBANGER_WORKSPACE=../foo` env
-    var resolves predictably regardless of the process cwd.
+    Delegates to kanbanger.binding.resolve_workspace — the same chain the
+    tools use (env pin > walk-up discovery > cwd fallback) so resources and
+    tools can never resolve different boards. S2 property preserved: always
+    an absolute canonical path.
     """
-    return str(Path(os.getenv("KANBANGER_WORKSPACE", os.getcwd())).resolve())
+    return str(resolve_workspace())
 
 
 def get_kanban_path() -> str:

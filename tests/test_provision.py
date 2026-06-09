@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from kanban_io import extract_board_key, format_board_key_marker
 from kanbanger import provision
 from kanbanger.provision import (
     CLAUDE_MD_END,
@@ -58,16 +59,106 @@ def test_board_scaffolded_when_absent(tmp_path: Path):
 
 
 def test_board_not_clobbered_when_present(tmp_path: Path):
+    """Existing board content survives provisioning.
+
+    Step-4 amendment (ADR 0002): an existing board LACKING a board key
+    receives exactly ONE additive marker comment line — the single
+    sanctioned modification. Every original byte is preserved: removing
+    that one line reproduces the original exactly.
+    """
     board = tmp_path / "_kanban.md"
     sentinel = "# Pre-existing Board\n\n## BACKLOG\n*   [ ] do not delete me\n"
     board.write_text(sentinel, encoding="utf-8")
 
     result = provision_project(tmp_path)
 
-    # Byte-for-byte unchanged.
-    assert board.read_text(encoding="utf-8") == sentinel
-    assert any("_kanban.md" in note for note in result.already_present)
+    after = board.read_text(encoding="utf-8")
+    key = extract_board_key(after)
+    assert key is not None  # the one sanctioned addition happened
+    marker_line = format_board_key_marker(key) + "\n"
+    # Removing the single added marker line reproduces the original
+    # byte-for-byte — nothing else was touched.
+    assert after.replace(marker_line, "", 1) == sentinel
+    assert after.count("kanbanger:board-id") == 1
+    # Reported as updated ("minted board key"), not created.
+    assert any(
+        "_kanban.md" in note and "minted board key" in note
+        for note in result.updated
+    )
     assert all("_kanban.md" not in note for note in result.created)
+
+
+# --- board key minting (ADR 0002, issue #15 step 4) -------------------------
+
+
+def test_new_board_scaffolded_with_minted_key(tmp_path: Path):
+    """A fresh scaffold carries a uuid4-hex board key under the title."""
+    result = provision_project(tmp_path)
+
+    text = (tmp_path / "_kanban.md").read_text(encoding="utf-8")
+    key = extract_board_key(text)
+    assert key is not None
+    assert len(key) == 32 and all(c in "0123456789abcdef" for c in key)
+    # Marker sits directly under the title line.
+    lines = text.splitlines()
+    assert lines[0].startswith("# ")
+    assert lines[1] == format_board_key_marker(key)
+    # The created note mentions the mint.
+    assert any(
+        "_kanban.md" in note and "board key" in note for note in result.created
+    )
+
+
+def test_existing_keyed_board_untouched_byte_for_byte(tmp_path: Path):
+    """A board that already carries a key is NEVER modified on re-provision."""
+    board = tmp_path / "_kanban.md"
+    keyed = (
+        "# Keyed Board\n"
+        "<!-- kanbanger:board-id: aabbccddeeff00112233445566778899 -->\n"
+        "\n## BACKLOG\n*   [ ] keep me\n"
+    )
+    board.write_text(keyed, encoding="utf-8")
+
+    result = provision_project(tmp_path)
+
+    assert board.read_text(encoding="utf-8") == keyed
+    assert any(
+        "_kanban.md" in note and "already" in note.lower()
+        for note in result.already_present
+    )
+    assert all("_kanban.md" not in note for note in result.updated)
+
+
+def test_minted_key_stable_across_reruns(tmp_path: Path):
+    """The key is minted ONCE; re-provisioning never re-mints or duplicates."""
+    provision_project(tmp_path)
+    board = tmp_path / "_kanban.md"
+    first = board.read_text(encoding="utf-8")
+    key_first = extract_board_key(first)
+
+    provision_project(tmp_path)
+    provision_project(tmp_path)
+
+    final = board.read_text(encoding="utf-8")
+    assert final == first  # byte-identical across re-runs
+    assert extract_board_key(final) == key_first
+    assert final.count("kanbanger:board-id") == 1
+
+
+def test_minting_existing_board_preserves_crlf_bytes(tmp_path: Path):
+    """Minting into a CRLF board preserves every original byte and uses the
+    board's own newline style for the one added marker line."""
+    board = tmp_path / "_kanban.md"
+    original = b"# CRLF Board\r\n\r\n## BACKLOG\r\n*   [ ] item\r\n"
+    board.write_bytes(original)
+
+    provision_project(tmp_path)
+
+    after = board.read_bytes()
+    key = extract_board_key(after.decode("utf-8"))
+    assert key is not None
+    marker_bytes = (format_board_key_marker(key) + "\r\n").encode("utf-8")
+    assert after.replace(marker_bytes, b"", 1) == original
 
 
 # --- CLAUDE.md touchpoint idempotency --------------------------------------
@@ -209,6 +300,13 @@ def test_setup_project_tool_scaffolds_board(tmp_path: Path, monkeypatch: pytest.
 def test_setup_project_tool_does_not_clobber_existing_board(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    """Existing board content survives the MCP setup_project tool.
+
+    Step-4 amendment (ADR 0002): the tool's one sanctioned modification is
+    minting the board-key marker into an unkeyed board; removing that one
+    line reproduces the original byte-for-byte, and the summary reports the
+    mint as an update.
+    """
     board = tmp_path / "_kanban.md"
     sentinel = "# Existing\n\n## BACKLOG\n*   [ ] keep me\n"
     board.write_text(sentinel, encoding="utf-8")
@@ -216,8 +314,11 @@ def test_setup_project_tool_does_not_clobber_existing_board(
     tool = _setup_project_tool(tmp_path, monkeypatch)
     out = tool()
 
-    assert board.read_text(encoding="utf-8") == sentinel
-    assert "already exists" in out or "already present" in out.lower()
+    after = board.read_text(encoding="utf-8")
+    key = extract_board_key(after)
+    assert key is not None
+    assert after.replace(format_board_key_marker(key) + "\n", "", 1) == sentinel
+    assert "minted board key" in out
 
 
 def test_setup_project_tool_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
