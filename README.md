@@ -13,6 +13,12 @@ kanbanger-partymix is an **MCP (Model Context Protocol) server** that gives AI a
 
 **Key Benefit**: AI can directly add, move, and sync tasks without you touching files or running commands.
 
+> **For AI agents:** drive the board through the MCP tools (`add_task`, `move_task`,
+> `list_tasks`, `sync_to_github`, …). **Never hand-edit `_kanban.md`** — the tools
+> handle validation, locking, and atomic writes for you. The board is project-scoped
+> (per-project `.venv` + `.mcp.json`); don't install Kanbanger at user/global scope.
+> Full rules: [LLM_GUIDANCE.md](LLM_GUIDANCE.md).
+
 ## Quick Start
 
 ```mermaid
@@ -258,7 +264,7 @@ venv, so the projects stay fully isolated.
 
 - **[INSTALL.md](INSTALL.md)** - Per-project install (the authoritative setup guide)
 - **[Setup Flow Diagram](docs/setup-flow.md)** - Visual guide
-- **[LLM Guidance](LLM_GUIDANCE.md)** - How AI should use kanbanger
+- **[LLM Guidance](LLM_GUIDANCE.md)** - MCP-first rules for AI agents (use the tools, never hand-edit)
 - **[Contributing](CONTRIBUTING.md)** - How to contribute
 
 ## Git Hooks (Optional Enforcement)
@@ -276,6 +282,10 @@ cd git-hooks
 ## Troubleshooting
 
 ### MCP Tools Not Showing
+
+**Fresh clone?** `.venv/` is gitignored, so a project cloned onto a new machine
+has a `.mcp.json` but no venv for it to point at — the server can't spawn. Re-run
+`python <partymix>/scripts/setup-venv.py` from the project root and restart. Then:
 
 1. **Check the config exists:**
 ```bash
