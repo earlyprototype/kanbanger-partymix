@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
 """
-setup-venv.py — Provision a per-project Kanbanger MCP environment.
+setup-venv.py — [DEPRECATED INSTALLER] per-project Kanbanger provisioning.
 
-Creates `<PROJECT>/.venv`, installs the partymix package editable into it,
-writes `<PROJECT>/.mcp.json` pinned to that venv's python.exe, ensures
-`.venv/` is gitignored, and adds a Kanbanger onboarding stanza to
-`<PROJECT>/CLAUDE.md` so AI agents know to drive the board through the MCP
-tools (the always-loaded touchpoint the server's own instructions can't be,
-since they're only visible after the server has already launched).
+DEPRECATED (ADR 0002, issue #15): this script NO LONGER installs anything.
 
-This is the cure for the v2.1.0/partymix `kanbanger_mcp` import collision:
-each project gets its own isolated kanbanger install, so there is no
-system-wide pip surgery and no silent shadowing.
+The supported install path is now a SINGLE GLOBAL install, like any other MCP
+server:
+
+    pipx install <path-to-kanbanger-partymix>      # recommended
+    # or
+    pip install <path-to-kanbanger-partymix>
+
+That gives you a working `kanbanger-mcp` server on PATH with no per-project
+`.venv`. The old per-project venv only existed to dodge the `kanbanger_mcp`
+import collision; the v3 module rename (`kanbanger_mcp` -> `kanbanger`) removed
+that cause, so per-project installs are no longer needed.
+
+What this script still does (for now): the PROVISIONING half only — write
+`<PROJECT>/.mcp.json`, ensure `.gitignore` hygiene, and drop the Kanbanger
+onboarding stanza into `<PROJECT>/CLAUDE.md`. It creates NO venv and runs NO
+pip install.
+
+NOTE: this remaining provisioning role is itself slated for replacement by
+in-MCP provisioning (issue #15 step 3 — an `init` / first-contact flow inside
+the server). When that lands, this script can be retired entirely. Do not
+extend it; prefer the in-MCP path.
 
 Usage:
     python <partymix>/scripts/setup-venv.py [PROJECT_DIR]
@@ -21,40 +34,37 @@ PROJECT_DIR defaults to the current working directory.
 Exit codes:
     0 - success
     1 - usage / preflight error
-    2 - subprocess failure (venv creation, pip install)
 """
 import argparse
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
 PARTYMIX_SOURCE = Path(__file__).resolve().parent.parent
 GITIGNORE_ENTRY = ".venv/"
-GITIGNORE_HEADER = "# Per-project venv created by kanbanger-partymix/scripts/setup-venv.py"
+GITIGNORE_HEADER = "# Local virtualenv (if any) — kanbanger installs globally; see ADR 0002"
 CLAUDE_MD_START = "<!-- kanbanger:start -->"
 CLAUDE_MD_END = "<!-- kanbanger:end -->"
-
-
-def venv_python_path(venv_dir: Path) -> Path:
-    """Return the path to the venv's python interpreter for the host platform."""
-    if sys.platform.startswith("win"):
-        return venv_dir / "Scripts" / "python.exe"
-    return venv_dir / "bin" / "python"
 
 
 def to_forward_slashes(p) -> str:
     return str(p).replace("\\", "/")
 
 
-def build_mcp_config(project_dir: Path, venv_python: Path) -> dict:
+def build_mcp_config(project_dir: Path) -> dict:
+    """Build a project `.mcp.json` that targets the GLOBAL kanbanger install.
+
+    Post-ADR-0002 there is no per-project venv to pin to, so the command is the
+    `kanbanger-mcp` console script installed globally (pipx/pip) and resolved on
+    PATH — exactly how any other MCP server is wired. (Previously this pinned to
+    `<project>/.venv/Scripts/python.exe -m kanbanger`.)
+    """
     project_path_fwd = to_forward_slashes(project_dir)
     return {
         "mcpServers": {
             "kanbanger": {
-                "command": to_forward_slashes(venv_python),
-                "args": ["-m", "kanbanger"],
+                "command": "kanbanger-mcp",
+                "args": [],
                 "env": {
                     "KANBANGER_WORKSPACE": "${KANBANGER_WORKSPACE:-" + project_path_fwd + "}",
                     "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
@@ -163,17 +173,31 @@ def ensure_claude_md_has_kanbanger(project_dir: Path) -> None:
     print(f"  appended kanbanger stanza to {claude_md}")
 
 
-def run(cmd, **kwargs):
-    print(f"  $ {' '.join(str(c) for c in cmd)}")
-    result = subprocess.run(cmd, **kwargs)
-    if result.returncode != 0:
-        sys.exit(2)
-    return result
+DEPRECATION_BANNER = """\
+============================================================================
+  setup-venv.py is DEPRECATED as an installer and installs NOTHING.
+
+  Install kanbanger ONCE, globally, like any other MCP server:
+
+      pipx install "{source}"
+      # or:  pip install "{source}"
+
+  That puts `kanbanger-mcp` on your PATH. No per-project .venv is needed
+  (the venv only ever existed to dodge the old kanbanger_mcp import
+  collision, which the module rename removed — see ADR 0002).
+
+  This script now only PROVISIONS a project (writes .mcp.json + the
+  CLAUDE.md touchpoint, tends .gitignore). That role is itself being
+  replaced by in-MCP provisioning (issue #15 step 3); prefer that once it
+  lands. Pass --no-provision to skip provisioning entirely.
+============================================================================
+"""
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Provision a per-project venv with kanbanger-partymix installed.",
+        description="[DEPRECATED installer] Provision a project for the GLOBAL "
+                    "kanbanger install. Creates no venv and installs nothing.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -198,6 +222,11 @@ def main(argv=None) -> int:
         action="store_true",
         help="Skip adding the Kanbanger stanza to the project's CLAUDE.md.",
     )
+    parser.add_argument(
+        "--no-provision",
+        action="store_true",
+        help="Print the deprecation/install banner and exit without provisioning.",
+    )
     args = parser.parse_args(argv)
 
     project_dir = Path(args.project_dir).resolve()
@@ -208,76 +237,46 @@ def main(argv=None) -> int:
         print(f"ERROR: partymix source not found at {PARTYMIX_SOURCE}", file=sys.stderr)
         return 1
 
-    venv_dir = project_dir / ".venv"
-    venv_python = venv_python_path(venv_dir)
+    # Deprecation / install banner — always shown, because this script no
+    # longer installs anything (ADR 0002). Global install is the supported path.
+    print(DEPRECATION_BANNER.format(source=to_forward_slashes(PARTYMIX_SOURCE)))
 
-    print("kanbanger-partymix per-project venv setup")
+    if args.no_provision:
+        print("--no-provision set: nothing to do (and nothing was installed).")
+        return 0
+
+    print("Provisioning project (no install — global kanbanger-mcp expected on PATH):")
     print(f"  project: {project_dir}")
-    print(f"  venv:    {venv_dir}")
     print(f"  source:  {PARTYMIX_SOURCE}")
     print()
 
-    if venv_dir.exists():
-        print("Step 1: venv already exists, reusing.")
-    else:
-        print("Step 1: creating venv...")
-        run([sys.executable, "-m", "venv", str(venv_dir)])
-
-    print("\nStep 2: upgrading pip in venv...")
-    run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
-
-    print("\nStep 3: installing partymix editable with [mcp] extras...")
-    run([str(venv_python), "-m", "pip", "install", "-e", f"{PARTYMIX_SOURCE}[mcp]", "--quiet"])
-
-    print("\nStep 4: verifying kanbanger resolves to partymix source...")
-    check = subprocess.run(
-        [
-            str(venv_python),
-            "-c",
-            "import kanbanger, os; "
-            "print(os.path.dirname(os.path.abspath(kanbanger.__file__)))",
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if check.returncode != 0:
-        print("  FAIL: could not import kanbanger in the venv", file=sys.stderr)
-        print(check.stderr, file=sys.stderr)
-        return 2
-    resolved = Path(check.stdout.strip())
-    expected = (PARTYMIX_SOURCE / "kanbanger").resolve()
-    if resolved.resolve() == expected:
-        print(f"  OK: kanbanger -> {resolved}")
-    else:
-        print(f"  WARN: expected {expected}")
-        print(f"        got      {resolved}")
-        print("  (editable installs can show site-packages paths; verify manually.)")
-
     if not args.no_mcp_json:
         mcp_json = project_dir / ".mcp.json"
-        print(f"\nStep 5: writing {mcp_json}")
+        print(f"Writing {mcp_json}")
         if mcp_json.exists():
             backup = project_dir / ".mcp.json.backup"
             print(f"  existing file backed up to {backup}")
             backup.write_text(mcp_json.read_text(encoding="utf-8"), encoding="utf-8")
-        config = build_mcp_config(project_dir, venv_python)
+        config = build_mcp_config(project_dir)
         mcp_json.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-        print(f"  wrote .mcp.json with command pinned to {venv_python}")
+        print("  wrote .mcp.json targeting the global `kanbanger-mcp` command")
 
     if not args.no_gitignore:
-        print("\nStep 6: ensuring .venv/ is gitignored")
+        print("\nEnsuring .venv/ is gitignored (harmless if you never make one)")
         ensure_gitignore_has_venv(project_dir)
 
     if not args.no_claude_md:
-        print("\nStep 7: adding the Kanbanger stanza to CLAUDE.md")
+        print("\nAdding the Kanbanger stanza to CLAUDE.md")
         ensure_claude_md_has_kanbanger(project_dir)
 
-    print("\nDone.")
+    print("\nDone (provisioning only — no install performed).")
     print("Next:")
+    print(f"  - Ensure kanbanger is installed globally: pipx install \"{to_forward_slashes(PARTYMIX_SOURCE)}\"")
     print(f"  - Open a fresh Claude Code session in {project_dir}")
     print("  - Confirm kanbanger MCP loads (paste '/mcp' or call list_tasks)")
     print("  - CLAUDE.md now tells agents to use the MCP tools, not hand-edit the board")
-    print("  - Run `kanban-doctor` (after Step 3 of MVP plan ports it to partymix)")
+    print("  - NOTE: this provisioning role is slated for replacement by in-MCP")
+    print("    provisioning (issue #15 step 3).")
     return 0
 
 
