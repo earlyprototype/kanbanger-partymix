@@ -17,6 +17,9 @@ additions:
   - dist-vs-package version-consistency check (catches the partymix
     setup.py 0.0.1 / __version__ 2.1.0 mismatch surfaced during MVP
     Step 1)
+  - ADR 0002 binding triple in the header (issue #15 step 5):
+    `workspace resolved = X -> board = Y -> key = Z`, rendered from one
+    kanbanger.binding.resolve_binding() call
 
 Usage:
     kanban-doctor                    # run from a workspace with _kanban.md
@@ -89,6 +92,40 @@ def _section(text):
     print()
     print(f"{BOLD}{text}{RESET}")
     print("-" * len(text))
+
+
+# ----- ADR 0002 binding triple (issue #15 step 5) -------------------------
+
+def print_binding(start_dir):
+    """Print the ADR 0002 observability triple under the `workspace:` header.
+
+    `workspace resolved = X -> board = Y -> key = Z` is rendered from ONE
+    kanbanger.binding.resolve_binding() call -- the exact chain the MCP
+    server uses (env pin > walk-up discovery > start dir), so the doctor
+    shows the binding a server launched against this workspace would use.
+
+    Deliberately a plain print, not an _emit check: the triple is identity
+    context for every check below, and none of its states is a failure --
+    an unkeyed (legacy) board and an unprovisioned dir are both valid, so
+    this line never touches the counters or the exit-code policy.
+    """
+    try:
+        from kanbanger.binding import resolve_binding
+    except ImportError as e:
+        # Doctor must keep working in the broken installs it diagnoses;
+        # check_kanbanger_importable reports the import problem properly.
+        print(f"binding:   unavailable (kanbanger.binding not importable: {e})")
+        return
+    binding = resolve_binding(start_dir)
+    board = binding.board_path or "none"
+    if binding.board_key:
+        key = binding.board_key
+    elif binding.board_path:
+        key = "none (legacy unkeyed board)"
+    else:
+        key = "none"
+    print(f"binding:   workspace resolved = {binding.workspace} "
+          f"-> board = {board} -> key = {key}")
 
 
 # ----- Individual checks -------------------------------------------------
@@ -545,6 +582,7 @@ def main():
 
     print(f"{BOLD}kanban-doctor (partymix) -- preflight checks{RESET}")
     print(f"workspace: {workspace}")
+    print_binding(workspace)
 
     _section("Environment")
     check_python_version()
