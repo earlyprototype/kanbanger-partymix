@@ -59,7 +59,9 @@ If `_kanban.md` already exists, proceed normally.
 
 ## Capabilities
 - Tools: add, move, delete, list tasks; propose_done / approve_done /
-  reject_review (the REVIEW gate); sync to GitHub; setup_project.
+  reject_review (the REVIEW gate); sync to GitHub; setup_project;
+  doctor (workspace health checks -- run it on first contact, after
+  setup_project, or whenever sync errors).
 - Resources: current board (kanban://current-board), stats, sync status,
   config.
 - Prompts: kanban awareness, task planning, daily standup, review-gate

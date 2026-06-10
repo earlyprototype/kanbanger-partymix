@@ -4,6 +4,7 @@ Kanbanger MCP Tools
 Callable functions that LLMs can use to interact with kanban boards.
 """
 
+import io
 import os
 import re
 import sys
@@ -11,9 +12,13 @@ import json
 import difflib
 import subprocess
 import threading
+from contextlib import redirect_stdout
 from typing import Optional, Tuple
 from mcp.server.fastmcp import FastMCP
 
+# Root module, like kanban_io: the shared doctor core (issue #23). It never
+# imports the mcp SDK; this package consumes its structured results.
+from kanban_doctor import render_report, run_doctor
 from kanban_io import (
     atomic_write_text,
     discover_columns,
@@ -805,12 +810,14 @@ def register_tools(server: FastMCP):
         if not os.getenv("GITHUB_TOKEN"):
             return _error(
                 ERROR_MISSING_GITHUB_TOKEN,
-                "GITHUB_TOKEN environment variable not set",
+                "GITHUB_TOKEN environment variable not set. "
+                "Run the `doctor` tool to diagnose sync configuration.",
             )
         if not os.getenv("GITHUB_REPO"):
             return _error(
                 ERROR_MISSING_GITHUB_REPO,
-                "GITHUB_REPO environment variable not set",
+                "GITHUB_REPO environment variable not set. "
+                "Run the `doctor` tool to diagnose sync configuration.",
             )
         
         TIMEOUT_SEC = int(os.getenv("KANBANGER_SYNC_TIMEOUT_SEC", "60"))
@@ -858,7 +865,8 @@ def register_tools(server: FastMCP):
                 ERROR_SYNC_TIMEOUT,
                 f"sync_to_github timed out after {TIMEOUT_SEC}s "
                 f"(set KANBANGER_SYNC_TIMEOUT_SEC to override; check "
-                f"GITHUB_REPO env var and network reachability)",
+                f"GITHUB_REPO env var and network reachability). "
+                f"Run the `doctor` tool to diagnose sync configuration.",
                 timeout_sec=TIMEOUT_SEC,
             )
         t_out.join(timeout=5)
@@ -874,9 +882,12 @@ def register_tools(server: FastMCP):
         # ("Error: <msg>") back to a structured code so callers don't
         # parse free-text. Falls back to ERROR_SYNC_SUBPROCESS_FAILED
         # for unrecognised messages; full stderr always in context.
+        # Issue #23: every classified sync failure points at the doctor
+        # tool so failure -> diagnosis is self-serve for agents.
         return _error(
             _classify_sync_stderr(stderr),
-            f"sync_to_github subprocess exited with code {rc}",
+            f"sync_to_github subprocess exited with code {rc}. "
+            f"Run the `doctor` tool to diagnose sync configuration.",
             return_code=rc,
             stderr=stderr,
             stdout=stdout,
@@ -1342,3 +1353,56 @@ def register_tools(server: FastMCP):
                 workspace=workspace,
             )
         return result.summary()
+
+    @server.tool()
+    def doctor(network: bool = False) -> str:
+        """
+        Run kanban-doctor health checks for THIS workspace and report a verdict.
+
+        The same implementation as the `kanban-doctor` CLI (one core, no
+        drift): verifies the ADR 0002 binding triple (workspace -> board ->
+        key), board file health, .kanban.json sync-state schema,
+        install/version integrity, and GitHub sync configuration with
+        source attribution (shell env / workspace .env / .mcp.json).
+
+        When to use:
+            - First contact with a project: confirm the board the server is
+              actually bound to before acting on it.
+            - Right after setup_project: verify provisioning landed.
+            - Whenever sync_to_github or get_sync_status errors: turn the
+              failure into a named, remediated diagnosis.
+
+        Args:
+            network: If True, also run the GitHub network checks (token
+                authentication, repo visibility, Projects V2 access, Status
+                field options). Default False mirrors the CLI's --no-network:
+                no network I/O is attempted, so the call is fast and safe
+                anywhere, including offline.
+
+        Returns:
+            Human-readable report. The first line is the overall verdict:
+              - "verdict: healthy" -- everything checks out
+              - "verdict: healthy (local-only)" -- GitHub sync is not
+                configured and the board is fully operational locally; a
+                supported state, NOT a fault
+              - "verdict: problems found" -- at least one FAIL; each [FAIL]
+                line carries its remediation
+            Then the binding triple, GitHub config sources, and per-section
+            PASS/WARN/FAIL/SKIP results. A "board = none" binding plus a
+            [WARN] on `_kanban.md in workspace` means the directory is
+            unprovisioned -- offer setup_project.
+        """
+        workspace = get_workspace()
+        try:
+            # stdout is the MCP stdio transport. The doctor core is silent
+            # when echo=False, but redirect defensively so a stray print in
+            # a future check can never corrupt protocol framing.
+            with redirect_stdout(io.StringIO()):
+                report = run_doctor(workspace, no_network=not network)
+            return render_report(report)
+        except Exception as e:
+            return _error(
+                ERROR_CONFIGURATION,
+                f"doctor run failed: {e}",
+                workspace=workspace,
+            )
