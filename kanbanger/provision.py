@@ -395,28 +395,34 @@ def scaffold_kanban_board(project_dir: Path, result: ProvisionResult | None = No
       * Board PRESENT, key already minted -> untouched byte-for-byte,
         reported as already-present.
 
+    The WHOLE check-then-act sequence runs under the kanban lock: the board
+    may be live under a running MCP server, and two concurrent provisions
+    must not both see "no board" and have the second clobber the first's
+    minted key (TOCTOU). Existence is therefore checked INSIDE the critical
+    section — if the board appears while we waited for the lock, we fall
+    through to the existing-board minting logic instead of overwriting it.
+
     Idempotent: the key is minted at most once, so re-runs are no-ops and
     the key is stable for the board's lifetime (it IS the board's identity
     — see kanbanger.binding).
     """
     board_path = project_dir / KANBAN_FILENAME
-    if not board_path.exists():
-        board = build_kanban_board(_default_project_name(project_dir))
-        board_key = mint_board_key()
-        board_path.write_text(insert_board_key(board, board_key), encoding="utf-8")
-        if result is not None:
-            result.created.append(
-                f"{KANBAN_FILENAME} (canonical 5-column board: "
-                "BACKLOG -> TODO -> DOING -> REVIEW -> DONE; "
-                f"board key {board_key} minted)"
-            )
-        return
-
-    # Existing board: mint the key additively if (and only if) it is
-    # missing. Lock + atomic write because this board may be live under a
-    # running MCP server. Raw bytes in, raw bytes out (newline="") so the
-    # original content round-trips exactly regardless of CRLF/LF style.
     with kanban_lock(str(project_dir)):
+        if not board_path.exists():
+            board = build_kanban_board(_default_project_name(project_dir))
+            board_key = mint_board_key()
+            board_path.write_text(insert_board_key(board, board_key), encoding="utf-8")
+            if result is not None:
+                result.created.append(
+                    f"{KANBAN_FILENAME} (canonical 5-column board: "
+                    "BACKLOG -> TODO -> DOING -> REVIEW -> DONE; "
+                    f"board key {board_key} minted)"
+                )
+            return
+
+        # Existing board: mint the key additively if (and only if) it is
+        # missing. Raw bytes in, raw bytes out (newline="") so the original
+        # content round-trips exactly regardless of CRLF/LF style.
         text = board_path.read_bytes().decode("utf-8")
         existing_key = extract_board_key(text)
         if existing_key is not None:

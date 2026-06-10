@@ -67,7 +67,10 @@ What provisioning writes — idempotent, safe to re-run:
 
 1. `_kanban.md` — the canonical 5-column board
    (BACKLOG → TODO → DOING → REVIEW → DONE). Scaffolded only if absent;
-   **an existing board is never modified**.
+   **an existing board is never clobbered** — the only change ever made to
+   one is inserting the `<!-- kanbanger:board-id: ... -->` marker comment
+   when it's missing (enables collision detection); every other byte is
+   preserved.
 2. `.mcp.json` — wires the project to the global `kanbanger-mcp` command,
    with empty `${VAR:-}` GitHub-sync placeholders. Left untouched if the
    project already has one.
@@ -139,8 +142,10 @@ data only ever lives in the project.
   environment or `.claude/settings.local.json`.
 - It does not configure GitHub Projects V2 sync. That's a separate step
   (set `GITHUB_PROJECT_NUMBER` and link a project to the repo).
-- It does not migrate or modify existing `_kanban.md` data — an existing
-  board is left byte-for-byte intact.
+- It does not migrate or restructure existing `_kanban.md` data — an
+  existing board is never clobbered. The one change it may make is adding
+  the board-key marker comment when absent (enables collision detection);
+  every other byte is preserved.
 
 ## Deprecated: per-project venvs (`scripts/setup-venv.py`)
 

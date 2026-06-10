@@ -44,7 +44,14 @@ def init(argv=None) -> int:
         print(f"ERROR: project directory not found: {project_dir}", file=sys.stderr)
         return 1
 
-    result = provision_project(project_dir)
+    try:
+        result = provision_project(project_dir)
+    except FileNotFoundError as e:
+        # TOCTOU window: the directory passed the is_dir() pre-check above
+        # but vanished before provisioning ran (provision_project re-checks
+        # and raises). Report it like any other bad-project-dir error.
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
     print(result.summary())
     return 0
 

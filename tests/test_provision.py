@@ -145,6 +145,50 @@ def test_minted_key_stable_across_reruns(tmp_path: Path):
     assert final.count("kanbanger:board-id") == 1
 
 
+def test_create_path_rechecks_existence_under_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """TOCTOU regression (PR #16 review): board creation is check-then-create
+    ATOMICALLY under the kanban lock.
+
+    Deterministic simulation of losing the creation race (no thread timing):
+    the patched lock writes a rival board the moment the lock is acquired —
+    i.e. "the board appeared while we waited". The existence re-check inside
+    the critical section must see it and fall through to the existing-board
+    minting path instead of clobbering the rival's content. On the old code
+    (creation outside the lock) the lock is never taken on the create path,
+    so the rival never appears and a fresh scaffold is written — failing this
+    test.
+    """
+    import contextlib
+
+    import kanban_io
+
+    board = tmp_path / "_kanban.md"
+    rival = "# Rival Board\n\n## BACKLOG\n*   [ ] rival task — do not clobber\n"
+    real_lock = kanban_io.kanban_lock
+
+    @contextlib.contextmanager
+    def lock_then_rival_appears(workspace):
+        with real_lock(workspace):
+            if not board.exists():  # rival provision wins the race mid-wait
+                board.write_text(rival, encoding="utf-8")
+            yield
+
+    monkeypatch.setattr(provision, "kanban_lock", lock_then_rival_appears)
+
+    result = provision_project(tmp_path)
+
+    after = board.read_text(encoding="utf-8")
+    key = extract_board_key(after)
+    assert key is not None  # fell through to the existing-board minting path
+    # Rival content preserved byte-for-byte modulo the one minted marker.
+    assert after.replace(format_board_key_marker(key) + "\n", "", 1) == rival
+    # Reported as an update (minted key), NOT as a fresh creation.
+    assert any("minted board key" in note for note in result.updated)
+    assert all("_kanban.md" not in note for note in result.created)
+
+
 def test_minting_existing_board_preserves_crlf_bytes(tmp_path: Path):
     """Minting into a CRLF board preserves every original byte and uses the
     board's own newline style for the one added marker line."""
@@ -351,3 +395,24 @@ def test_cli_init_rejects_missing_dir(tmp_path: Path):
 
     rc = init([str(tmp_path / "nope")])
     assert rc == 1
+
+
+def test_cli_init_reports_error_when_dir_vanishes_mid_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+):
+    """TOCTOU regression (PR #16 review): the directory passes the is_dir()
+    pre-check but vanishes before provision_project runs — `kanbanger init`
+    reports the error on stderr and returns 1 instead of crashing."""
+    from kanbanger import cli
+
+    def vanishes(project_dir):
+        raise FileNotFoundError(f"project directory not found: {project_dir}")
+
+    monkeypatch.setattr(cli, "provision_project", vanishes)
+
+    rc = cli.init([str(tmp_path)])
+
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "ERROR: project directory not found" in captured.err
+    assert captured.out == ""

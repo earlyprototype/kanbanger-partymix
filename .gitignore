@@ -69,5 +69,6 @@ _smoke_*.txt
 _smoke_*.out
 _smoke_*.err
 
-# Per-project venv created by kanbanger-partymix/scripts/setup-venv.py
+# Local virtualenv (if any) — kanbanger installs globally (ADR 0002);
+# setup-venv.py no longer creates one
 .venv/
