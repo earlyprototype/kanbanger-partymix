@@ -264,23 +264,23 @@ We currently support only English. If you'd like to add translations:
 
 ```
 kanbanger-partymix/
-├── kanbanger_mcp/              # MCP server (tools, resources, prompts, server)
+├── kanbanger/                  # MCP server (tools, resources, prompts, server)
 ├── sync_kanban.py              # Core sync engine
 ├── kanban_io.py                # Shared board I/O + column discovery
 ├── kanban_doctor.py            # Install / preflight diagnostics
-├── scripts/setup-venv.py       # Per-project venv installer
+├── scripts/setup-venv.py       # [Deprecated] provisioning shim — use `kanbanger init`
 ├── setup.py                    # Package config
 ├── git-hooks/                  # Git hook scripts
 ├── _kanban.md                  # Our own kanban (dogfooding!)
 ├── README.md                   # Main documentation
-├── INSTALL.md                  # Per-project install guide
+├── INSTALL.md                  # Install-once + provisioning guide
 ├── LLM_GUIDANCE.md             # AI assistant guide
 ├── CHANGELOG.md                # Version history
 └── CONTRIBUTING.md             # This file
 ```
 
 **Key files to understand:**
-- `kanbanger_mcp/` - The MCP server (`tools.py`, `resources.py`, `prompts.py`, `server.py`)
+- `kanbanger/` - The MCP server (`tools.py`, `resources.py`, `prompts.py`, `server.py`)
 - `sync_kanban.py` - Sync logic (parsing, syncing, GraphQL)
 - `LLM_GUIDANCE.md` - How LLMs should interact with kanbans
 

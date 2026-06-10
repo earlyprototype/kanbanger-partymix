@@ -56,8 +56,11 @@ def test_idempotent_no_duplicate_block(setup_venv, tmp_path):
     assert text.count(setup_venv.CLAUDE_MD_END) == 1
 
 
-def test_recovery_command_points_at_setup_venv(setup_venv, tmp_path):
+def test_recovery_command_points_at_in_mcp_provisioning(setup_venv, tmp_path):
     setup_venv.ensure_claude_md_has_kanbanger(tmp_path)
     text = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
-    # The clone-recovery hint must reference the provisioning script.
-    assert "scripts/setup-venv.py" in text
+    # Recovery now points at the in-MCP provisioning path (issue #15 step 3):
+    # the `setup_project` tool, or `kanbanger init` for CLI parity — NOT the
+    # deprecated scripts/setup-venv.py.
+    assert "setup_project" in text
+    assert "kanbanger init" in text

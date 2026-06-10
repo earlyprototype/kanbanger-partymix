@@ -11,7 +11,6 @@ import json
 import difflib
 import subprocess
 import threading
-from pathlib import Path
 from typing import Optional, Tuple
 from mcp.server.fastmcp import FastMCP
 
@@ -21,6 +20,8 @@ from kanban_io import (
     kanban_lock,
     parse_task_title_with_description as _parse_task_title_with_description,
 )
+from .binding import resolve_workspace
+from .provision import provision_project
 
 # S6: title-injection guard. Lines beginning with `* [` are kanban
 # task entries and `## ` are column headers; allowing those patterns
@@ -57,6 +58,11 @@ ERROR_MISSING_REASON = "missing_reason"
 # Direct calls from any non-REVIEW column return this code; the canonical
 # path is propose_done(title) followed by approve_done(title).
 ERROR_GATE_VIOLATION = "gate_violation"
+# ADR 0002 (issue #15 step 4): the sync-state sidecar records the board's
+# minted key; a mismatch means .kanban.json belongs to a DIFFERENT board
+# than the one on disk (classic symptom: a copied project carrying someone
+# else's sync state, or a board file swapped under an existing state).
+ERROR_BOARD_KEY_MISMATCH = "board_key_mismatch"
 
 
 def _error(code: str, message: str, **context) -> str:
@@ -110,6 +116,8 @@ def _classify_sync_stderr(stderr: str) -> str:
             return ERROR_MISSING_GITHUB_TOKEN
         if "GITHUB_REPO" in body or "--repo" in body:
             return ERROR_MISSING_GITHUB_REPO
+        if "belongs to a different board" in body:
+            return ERROR_BOARD_KEY_MISMATCH
         if body.startswith("File not found"):
             return ERROR_KANBAN_NOT_FOUND
         if "GitHub API returned status" in body or body.startswith("GraphQL errors"):
@@ -242,13 +250,19 @@ def validate_task_title(title: str) -> Tuple[bool, Optional[str]]:
 
 
 def get_workspace() -> str:
-    """Get the current workspace directory.
+    """Get the current workspace directory (ADR 0002 binding precedence).
 
-    S2: returns an absolute canonical path. `Path.resolve()` collapses
-    `..` segments and symlinks so a `KANBANGER_WORKSPACE=../foo` env
-    var resolves predictably regardless of the process cwd.
+    Delegates to kanbanger.binding.resolve_workspace:
+      KANBANGER_WORKSPACE env (explicit pin, back-compat with every
+      provisioned .mcp.json) > walk-up discovery from the server cwd to
+      the nearest ancestor containing `_kanban.md` > cwd fallback
+      (unprovisioned workspace).
+
+    S2 property preserved: always an absolute canonical path (`..`
+    segments and symlinks collapsed) so resolution is predictable
+    regardless of the process cwd.
     """
-    return str(Path(os.getenv("KANBANGER_WORKSPACE", os.getcwd())).resolve())
+    return str(resolve_workspace())
 
 
 def get_kanban_path() -> str:
@@ -1266,3 +1280,65 @@ def register_tools(server: FastMCP):
                 "reason": reason,
             },
         )
+
+    @server.tool()
+    def setup_project() -> str:
+        """
+        Provision THIS workspace for kanbanger (idempotent first-contact setup).
+
+        Run this when kanbanger is installed but the current project has no
+        board yet, or you want to (re-)establish the agent touchpoint and MCP
+        wiring. Safe to run repeatedly: existing files are never clobbered.
+
+        Provisions, in the workspace (KANBANGER_WORKSPACE, else the nearest
+        ancestor of the server's cwd containing `_kanban.md`, else the cwd —
+        ADR 0002 binding precedence):
+          - `_kanban.md`: the board, canonical 5-column schema
+            (BACKLOG -> TODO -> DOING -> REVIEW -> DONE), with a stable
+            board key minted in as an invisible HTML comment
+            (`<!-- kanbanger:board-id: ... -->`). If a board already exists
+            its CONTENT is left exactly as-is, with one sanctioned additive
+            exception: a board lacking a key gets the single marker comment
+            inserted under its title (all other bytes preserved, reported
+            as updated/"minted board key"). A board that already carries a
+            key is untouched and reported as already present.
+          - `CLAUDE.md`: the agent onboarding stanza (drive the board via the
+            MCP tools; never hand-edit `_kanban.md`; REVIEW gates DONE). Added
+            if absent, refreshed in place if the marker block is already there.
+            `AGENTS.md` gets the same stanza only if it already exists.
+          - `.mcp.json`: wires the project to the global `kanbanger-mcp`
+            command, with EMPTY GitHub-sync placeholders. Written only if
+            absent; an existing `.mcp.json` is left untouched.
+          - `.gitignore`: ensures a stray `.venv/` stays out of version control.
+
+        GitHub sync: the GITHUB_TOKEN / GITHUB_REPO / GITHUB_PROJECT_NUMBER
+        slots in `.mcp.json` are empty `${VAR:-}` placeholders. NO secret is
+        ever written; fill them via your environment or a local, gitignored
+        `.env`, then sync_to_github / get_sync_status will pick them up.
+
+        Returns:
+            A human-readable summary of what was created vs already present.
+
+        Note: the minted board key is the board's stable identity (ADR 0002
+        collision-proof binding) — it survives moving or renaming the
+        project folder, and lets sync detect a copied board's state file.
+        Discovery of WHICH board to use is derived at runtime
+        (kanbanger.binding.resolve_binding): env pin > walk-up > cwd.
+        """
+        workspace = get_workspace()
+        try:
+            result = provision_project(workspace)
+        except FileNotFoundError as e:
+            return _error(
+                ERROR_CONFIGURATION,
+                f"Cannot provision: {e}. Set KANBANGER_WORKSPACE to an existing "
+                "project directory (or launch the server from one).",
+                workspace=workspace,
+            )
+        except Exception as e:
+            return _error(
+                ERROR_WRITE_FAILED,
+                f"Provisioning failed: {e}",
+                workspace=workspace,
+            )
+        return result.summary()

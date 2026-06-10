@@ -5,7 +5,7 @@ Model Context Protocol server for kanbanger task management.
 Provides tools, resources, and prompts for LLM-assisted kanban management.
 """
 
-__version__ = "2.1.0"
+__version__ = "3.0.0"
 __author__ = "earlyprototype"
 
 # Native `mcp` SDK (FastMCP) is import-clean: it has no stdout side-effects

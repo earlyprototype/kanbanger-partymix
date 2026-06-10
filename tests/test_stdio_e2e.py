@@ -3,12 +3,15 @@
 The other tests prove the tool *functions* (via a stub) and that the surface
 *registers* (on a real FastMCP instance). This proves the part users actually
 depend on: a tool invoked over the MCP stdio wire against a spawned
-`python -m kanbanger_mcp` parses its arguments, runs, mutates the board, and
+`python -m kanbanger` parses its arguments, runs, mutates the board, and
 returns correctly — and the REVIEW gate is enforced on that wire path.
 
 It spawns a subprocess and speaks real MCP, so it is slower than the unit
 tests; it is the regression guard for "the board actually works in a client",
 not just "the code imports".
+
+(Formerly spawned ``python -m kanbanger_mcp``; updated to ``python -m kanbanger``
+after the ADR 0002 module rename.)
 """
 from __future__ import annotations
 
@@ -37,7 +40,7 @@ async def _drive(workspace: str) -> dict:
     env = dict(os.environ)
     env["KANBANGER_WORKSPACE"] = workspace
     params = StdioServerParameters(
-        command=sys.executable, args=["-m", "kanbanger_mcp"], env=env
+        command=sys.executable, args=["-m", "kanbanger"], env=env
     )
     out: dict = {}
     async with stdio_client(params) as (read, write):

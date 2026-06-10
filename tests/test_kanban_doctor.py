@@ -227,6 +227,82 @@ def test_status_field_passes_on_full_five_column_project(monkeypatch: pytest.Mon
     assert "all five" in out
 
 
+# --- ADR 0002 binding triple (issue #15 step 5) ---------------------------
+# The doctor header must render `workspace resolved = X -> board = Y ->
+# key = Z` from one resolve_binding() call. KANBANGER_WORKSPACE is pinned
+# to the temp dir in each probe so resolution is deterministic (no walk-up
+# past tmp_path into the runner's filesystem).
+
+
+def _set_doctor_env(monkeypatch: pytest.MonkeyPatch, workspace: Path) -> None:
+    monkeypatch.setenv("KANBANGER_WORKSPACE", str(workspace))
+    monkeypatch.setenv("GITHUB_REPO", "owner/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "A" * 36)
+
+
+def test_doctor_prints_binding_triple_for_keyed_board(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Keyed board: the triple shows resolved workspace, board path and the
+    minted key verbatim."""
+    from kanban_io import insert_board_key, mint_board_key
+
+    key = mint_board_key()
+    (tmp_path / "_kanban.md").write_text(
+        insert_board_key(VALID_BOARD, key), encoding="utf-8"
+    )
+    _set_doctor_env(monkeypatch, tmp_path)
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 0, result.stdout
+    resolved = tmp_path.resolve()
+    expected = (
+        f"workspace resolved = {resolved} "
+        f"-> board = {resolved / '_kanban.md'} -> key = {key}"
+    )
+    assert expected in result.stdout, (
+        f"binding triple missing/wrong.\nExpected: {expected}\n"
+        f"STDOUT:\n{result.stdout}"
+    )
+
+
+def test_doctor_prints_binding_triple_for_unkeyed_board(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Legacy unkeyed board: key rendered as absent/legacy, and the doctor
+    must NOT fail over it (keyless boards are valid -- exit stays 0)."""
+    (tmp_path / "_kanban.md").write_text(VALID_BOARD, encoding="utf-8")
+    _set_doctor_env(monkeypatch, tmp_path)
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 0, result.stdout
+    resolved = tmp_path.resolve()
+    expected = (
+        f"workspace resolved = {resolved} "
+        f"-> board = {resolved / '_kanban.md'} "
+        f"-> key = none (legacy unkeyed board)"
+    )
+    assert expected in result.stdout, (
+        f"binding triple missing/wrong.\nExpected: {expected}\n"
+        f"STDOUT:\n{result.stdout}"
+    )
+
+
+def test_doctor_prints_binding_triple_when_no_board(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Unprovisioned dir: board and key both none, no crash. Missing board
+    stays a WARN under existing policy, so exit is still 0."""
+    _set_doctor_env(monkeypatch, tmp_path)
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 0, result.stdout
+    expected = (
+        f"workspace resolved = {tmp_path.resolve()} -> board = none -> key = none"
+    )
+    assert expected in result.stdout, (
+        f"binding triple missing/wrong.\nExpected: {expected}\n"
+        f"STDOUT:\n{result.stdout}"
+    )
+
+
 def test_doctor_flags_corrupt_state_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """A `.kanban.json` that isn't valid JSON should produce a FAIL,
     causing the doctor to exit 1."""

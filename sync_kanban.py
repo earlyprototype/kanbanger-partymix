@@ -17,6 +17,7 @@ from kanban_io import (
     atomic_write_json,
     kanban_lock,
     parse_task_title_with_description,
+    read_board_key,
 )
 
 # Load environment variables from .env file if it exists.
@@ -174,6 +175,9 @@ class StateManager:
             "schema_version": SCHEMA_VERSION,
             "repo_node_id": None,
             "project_id": None,
+            # ADR 0002: the minted board key this state belongs to. None
+            # until the first sync against a keyed board adopts it.
+            "board_key": None,
             "tasks": {}
         }
 
@@ -217,6 +221,7 @@ class StateManager:
                     "schema_version": SCHEMA_VERSION,
                     "repo_node_id": None,
                     "project_id": None,
+                    "board_key": None,
                     "tasks": {},
                 }
                 return self.state
@@ -250,6 +255,51 @@ class StateManager:
         with kanban_lock(workspace):
             atomic_write_json(str(self.state_file), self.state)
     
+    def verify_board_key(self, board_key: Optional[str]) -> None:
+        """Guard the sync state against a copied / swapped board (ADR 0002).
+
+        `.kanban.json` pairs LOCAL task titles with REMOTE GitHub item ids.
+        If the board file and the state file stop belonging to each other —
+        the classic cause being a copied project directory, where both
+        copies carry the SAME minted board key but only one of them should
+        keep driving the original GitHub project items — silent
+        cross-driving would corrupt the remote project. The minted board
+        key makes the pairing checkable:
+
+          * `board_key` is None (legacy unkeyed board): no check — old
+            boards keep syncing exactly as before.
+          * state has no recorded key yet: ADOPT the board's key (first
+            sync against a keyed board, or migration of pre-key state);
+            persisted by the next save().
+          * recorded key == board key: the pair belongs together; no-op.
+          * recorded key != board key: REFUSE with ConfigurationError —
+            "sync state belongs to a different board (copied?)". The user
+            deletes the stale .kanban.json (fresh sync state for this
+            copy) or restores the right board.
+
+        NOTE: this detects state-vs-board mismatch. The full duplication
+        case — two faithful copies (same key, same state) BOTH syncing to
+        one GitHub project from different folders — needs a remote-side
+        marker to disambiguate and is out of scope here (flagged in issue
+        #15 step 4).
+        """
+        if board_key is None:
+            return
+        recorded = self.state.get("board_key")
+        if recorded is None:
+            self.state["board_key"] = board_key
+            return
+        if recorded != board_key:
+            raise ConfigurationError(
+                f"sync state belongs to a different board (copied?): "
+                f"{self.state_file} records board key {recorded}, but "
+                f"{self.kanban_file} carries board key {board_key}. "
+                f"If this project directory was copied, delete "
+                f"{self.state_file} to start fresh sync state for this "
+                f"copy (the original copy keeps the existing state); "
+                f"otherwise restore the matching board file."
+            )
+
     def get_item_id(self, task_title: str) -> Optional[str]:
         """Get the GitHub item ID for a task title."""
         return self.state["tasks"].get(task_title, {}).get("item_id")
@@ -547,7 +597,13 @@ class Syncer:
         
         print(f"Loading state from {self.state.state_file}...")
         self.state.load()
-        
+
+        # ADR 0002 copied-board guard: refuse BEFORE any network call if
+        # this state file belongs to a different board than the one on
+        # disk (raises ConfigurationError). Unkeyed legacy boards skip the
+        # check; a keyed board's key is adopted into state on first sync.
+        self.state.verify_board_key(read_board_key(self.board.file_path))
+
         print(f"Connecting to GitHub repository {repo}...")
         repo_node_id, project_id, status_field_id, status_options = self.client.get_repo_project(
             owner, repo_name, project_number

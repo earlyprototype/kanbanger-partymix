@@ -15,15 +15,16 @@ kanbanger-partymix is an **MCP (Model Context Protocol) server** that gives AI a
 
 > **For AI agents:** drive the board through the MCP tools (`add_task`, `move_task`,
 > `list_tasks`, `sync_to_github`, …). **Never hand-edit `_kanban.md`** — the tools
-> handle validation, locking, and atomic writes for you. The board is project-scoped
-> (per-project `.venv` + `.mcp.json`); don't install Kanbanger at user/global scope.
+> handle validation, locking, and atomic writes for you. The install is global
+> (one `kanbanger-mcp` for the whole machine — ADR 0002); the **board** is
+> project-scoped via each project's `.mcp.json` + `_kanban.md`.
 > Full rules: [LLM_GUIDANCE.md](LLM_GUIDANCE.md).
 
 ## Quick Start
 
 ```mermaid
 graph LR
-    A[Clone] --> B[setup-venv.py]
+    A[Install once<br/>pipx] --> B[kanbanger init<br/>per project]
     B --> C[AI creates board]
     C --> D[AI manages tasks]
     D --> E[Auto-sync to GitHub]
@@ -34,24 +35,30 @@ graph LR
     style E fill:#4CAF50
 ```
 
-### 1. Clone kanbanger-partymix (once)
+### 1. Install kanbanger (once per machine)
 
 ```bash
-git clone https://github.com/earlyprototype/kanbanger-partymix.git
+pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git
 ```
 
-### 2. Provision your project (per project)
+Not on PyPI yet — install from git (or a local clone); plain `pip` and
+`uv tool install` work the same way. This puts `kanbanger-mcp` (the MCP
+server), `kanbanger` (CLI), `kanban-sync`, and `kanban-doctor` on PATH.
 
-From your project's root directory, run the per-project installer (adjust the
-path to wherever you cloned this repo):
+### 2. Provision your project (once per project)
+
+From your project's root directory:
 
 ```bash
-python /path/to/kanbanger-partymix/scripts/setup-venv.py
+kanbanger init
 ```
 
-It creates a per-project `.venv`, installs kanbanger into it, and writes a
-`.mcp.json` pinned to that venv. See **[INSTALL.md](INSTALL.md)** for the full
-flow and how to supply GitHub credentials.
+It scaffolds `_kanban.md` (never touches an existing board), writes a
+`.mcp.json` that targets the global `kanbanger-mcp` command, and adds the
+agent touchpoint to `CLAUDE.md`. Idempotent — safe to re-run. (Equivalent:
+ask your AI to call the `setup_project` MCP tool.) See
+**[INSTALL.md](INSTALL.md)** for the full flow and how to supply GitHub
+credentials.
 
 ### 3. Open a fresh Claude Code session
 
@@ -151,33 +158,33 @@ Create `_kanban.md` in your project root:
 
 ## Configuration
 
-### Per-Project Setup (Automatic)
+### Per-project config (written by provisioning)
 
-`scripts/setup-venv.py` writes a `.mcp.json` in your project root, with the
-`command` pinned to that project's own `.venv` python:
+`kanbanger init` (or the `setup_project` MCP tool) writes a `.mcp.json` in
+your project root that targets the single global install:
 
 ```json
 {
-    "mcpServers": {
-        "kanbanger": {
-            "command": "/abs/path/to/project/.venv/Scripts/python.exe",
-            "args": ["-m", "kanbanger_mcp"],
-            "env": {
-                "KANBANGER_WORKSPACE": "${KANBANGER_WORKSPACE:-/abs/path/to/project}",
-                "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
-                "GITHUB_REPO": "${GITHUB_REPO:-}",
-                "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER:-}"
-            }
-        }
+  "mcpServers": {
+    "kanbanger": {
+      "command": "kanbanger-mcp",
+      "args": [],
+      "env": {
+        "KANBANGER_WORKSPACE": "${KANBANGER_WORKSPACE:-/abs/path/to/project}",
+        "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
+        "GITHUB_REPO": "${GITHUB_REPO:-}",
+        "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER:-}"
+      }
     }
+  }
 }
 ```
 
 **Key points:**
 - `${VAR:-default}` - Claude Code substitution syntax (not Cursor's `${env:VAR}`).
-- **Per-project venv** - the pinned `.venv` python avoids the `kanbanger_mcp`
-  import collision between installs (see [INSTALL.md](INSTALL.md)).
-- **Per-project** - each project gets its own independent `.mcp.json` + venv.
+- **Global install** - one `kanbanger-mcp` on PATH serves every project
+  (ADR 0002); no per-project venv to pin.
+- **Per-project board** - each project keeps its own `.mcp.json` + `_kanban.md`.
 
 ### GitHub credentials
 
@@ -204,11 +211,11 @@ into the MCP server spawn:
 
 | Command | Purpose |
 |---------|---------|
-| `python scripts/setup-venv.py` | Provision a project's venv + `.mcp.json` |
+| `kanbanger init` | Provision a project (board + `.mcp.json` + touchpoint) |
 | `kanban-doctor` | Preflight / diagnose a project's install |
 | `kanban-sync _kanban.md --dry-run` | Preview changes (safe) |
 | `kanban-sync _kanban.md` | Sync to GitHub |
-| `python -m kanbanger_mcp --help` | MCP server options |
+| `python -m kanbanger --help` | MCP server options |
 
 **Or just ask your AI!**
 - "Add task X to TODO"
@@ -241,28 +248,27 @@ AI: add_task("Task name", "TODO") ✅
 
 ## Multiple Projects
 
-Each project gets its own venv + MCP server:
+One global install serves every project; each project keeps its own board
+and config:
 
 ```
 ProjectA/
-├── .venv/                        # Project-local kanbanger install
-├── .mcp.json                     # Pinned to ProjectA/.venv
-├── _kanban.md
+├── .mcp.json                     # Targets the global kanbanger-mcp
+├── _kanban.md                    # ProjectA's own board
 └── .claude/settings.local.json   # GitHub creds (gitignored)
 
 ProjectB/
-├── .venv/
-├── .mcp.json                     # Pinned to ProjectB/.venv
+├── .mcp.json
 ├── _kanban.md
 └── .claude/settings.local.json
 ```
 
-Run `setup-venv.py` once per project — each `.mcp.json` is pinned to its own
-venv, so the projects stay fully isolated.
+Run `kanbanger init` once per project — each server spawn is scoped to its
+project's workspace, so boards never mix.
 
 ## Documentation
 
-- **[INSTALL.md](INSTALL.md)** - Per-project install (the authoritative setup guide)
+- **[INSTALL.md](INSTALL.md)** - Install once + provision per project (the authoritative setup guide)
 - **[Setup Flow Diagram](docs/setup-flow.md)** - Visual guide
 - **[LLM Guidance](LLM_GUIDANCE.md)** - MCP-first rules for AI agents (use the tools, never hand-edit)
 - **[Contributing](CONTRIBUTING.md)** - How to contribute
@@ -283,18 +289,20 @@ cd git-hooks
 
 ### MCP Tools Not Showing
 
-**Fresh clone?** `.venv/` is gitignored, so a project cloned onto a new machine
-has a `.mcp.json` but no venv for it to point at — the server can't spawn. Re-run
-`python <partymix>/scripts/setup-venv.py` from the project root and restart. Then:
+**Fresh machine?** The project's `.mcp.json` targets the global `kanbanger-mcp`
+command — if kanbanger isn't installed on this machine, the server can't spawn.
+Install once
+(`pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git`)
+and restart. Then:
 
 1. **Check the config exists:**
 ```bash
 ls .mcp.json
 ```
 
-2. **Check the venv resolves kanbanger:**
+2. **Check the global command resolves:**
 ```bash
-.venv/Scripts/python -c "import kanbanger_mcp; print(kanbanger_mcp.__file__)"
+kanbanger-mcp --help
 ```
 
 3. **Restart Claude Code** - required after `.mcp.json` changes.
@@ -340,7 +348,7 @@ A: Kanbanger syncs one-way: local → GitHub. Your project becomes a view of you
 A: Yes, different project per workspace. Each workspace configured independently.
 
 **Q: Is PyPI available?**  
-A: Not yet. We're focusing on API stability first. Use git installation for now.
+A: Not yet — install from git via pipx for now. A PyPI release is planned.
 
 ## Examples
 
@@ -381,7 +389,7 @@ kanban-sync _kanban.md
 
 - ✅ MCP Server
 - ✅ GitHub Projects V2 sync
-- ✅ Per-project venv install (`setup-venv.py`)
+- ✅ Single global install + in-MCP provisioning (`setup_project` / `kanbanger init`)
 - ✅ First-run onboarding (AI offers to create the board)
 - ✅ Git hooks
 - ✅ `kanban-doctor` preflight

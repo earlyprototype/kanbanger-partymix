@@ -30,7 +30,7 @@ def test_reject_review_happy_normal_title_unchanged(registered_tools, kanban_wor
 
 def test_reject_review_rework_title_over_cap_fails(registered_tools, kanban_workspace):
     """Original near 500-char cap -> Rework exceeds cap -> invalid_title."""
-    from kanbanger_mcp.tools import TITLE_MAX_LEN
+    from kanbanger.tools import TITLE_MAX_LEN
 
     long_title = "X" * (TITLE_MAX_LEN - 4)
     _seed_review_task(kanban_workspace, long_title)
@@ -47,7 +47,7 @@ def test_reject_review_rework_title_over_cap_fails(registered_tools, kanban_work
 
 def test_reject_review_rework_title_at_cap_passes(registered_tools, kanban_workspace):
     """Boundary: Rework title exactly at cap is still valid (validator uses >, not >=)."""
-    from kanbanger_mcp.tools import TITLE_MAX_LEN
+    from kanbanger.tools import TITLE_MAX_LEN
 
     boundary_title = "X" * (TITLE_MAX_LEN - 8)
     _seed_review_task(kanban_workspace, boundary_title)
@@ -61,7 +61,7 @@ def test_reject_review_rework_title_at_cap_passes(registered_tools, kanban_works
 
 def test_reject_review_rework_failure_does_not_mutate_board(registered_tools, kanban_workspace):
     """invalid_title return leaves the original in REVIEW (atomic property)."""
-    from kanbanger_mcp.tools import TITLE_MAX_LEN
+    from kanbanger.tools import TITLE_MAX_LEN
 
     long_title = "X" * (TITLE_MAX_LEN - 4)
     _seed_review_task(kanban_workspace, long_title)
@@ -83,7 +83,7 @@ def test_reject_review_rework_validation_preserves_other_rules(
 ):
     """underlying_error reaches the caller -- proves the validator's full rule set
     is applied uniformly, not just the length cap."""
-    from kanbanger_mcp.tools import TITLE_MAX_LEN
+    from kanbanger.tools import TITLE_MAX_LEN
 
     long_title = "X" * (TITLE_MAX_LEN - 4)
     _seed_review_task(kanban_workspace, long_title)

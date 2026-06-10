@@ -34,24 +34,25 @@ Stdio (default, for MCP clients):
 
 ```bash
 export KANBANGER_WORKSPACE=/path/to/project   # directory containing _kanban.md
-python3 -m kanbanger_mcp
+python3 -m kanbanger
 ```
 
 HTTP transport (optional):
 
 ```bash
-python3 -m kanbanger_mcp --transport streamable-http --host 127.0.0.1 --port 8000
+python3 -m kanbanger --transport streamable-http --host 127.0.0.1 --port 8000
 ```
 
-### Per-project consumer setup (`setup-venv.py`)
+### Consumer setup (install once + provision per project)
 
-`scripts/setup-venv.py` creates a project `.venv` and `.mcp.json`. It requires the system `venv` module:
-
-```bash
-sudo apt-get install -y python3.12-venv   # Ubuntu/Debian if venv creation fails
-```
-
-Point it at this repo clone: `python3 /workspace/scripts/setup-venv.py /path/to/your/project`.
+Install globally once — `pipx install <path-to-this-clone>` or
+`pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git`
+(plain `pip` works too). Then provision each project from its root with
+`kanbanger init`: scaffolds `_kanban.md`, writes `.mcp.json` targeting the
+global `kanbanger-mcp` command, and adds the agent touchpoint (ADR 0002).
+The in-MCP `setup_project` tool does the same from inside a session.
+`scripts/setup-venv.py` is a deprecated shim over the same provisioning
+code — it no longer installs anything.
 
 ### GitHub sync (optional)
 
@@ -62,6 +63,6 @@ Point it at this repo clone: `python3 /workspace/scripts/setup-venv.py /path/to/
 | Component | Required for `pytest` | Notes |
 |-----------|----------------------|--------|
 | Python 3.10+ + editable `[mcp]` install | Yes | |
-| `kanbanger_mcp` subprocess | Only `tests/test_stdio_e2e.py` | Test spawns it automatically |
+| `kanbanger` subprocess | Only `tests/test_stdio_e2e.py` | Test spawns it automatically |
 | GitHub API | No | Optional for sync demos |
 | MCP IDE host | No | Optional for manual MCP E2E |

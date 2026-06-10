@@ -1,4 +1,4 @@
-"""Smoke test: kanban_io + kanbanger_mcp.tools import cleanly."""
+"""Smoke test: kanban_io + kanbanger.tools import cleanly."""
 
 from __future__ import annotations
 

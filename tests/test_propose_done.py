@@ -70,7 +70,7 @@ def test_propose_done_kanban_not_found(registered_tools, kanban_workspace):
 def test_propose_done_write_failed(registered_tools, kanban_workspace,
                                    monkeypatch):
     _seed_doing_task(kanban_workspace, "Task A")
-    import kanbanger_mcp.tools as tools_mod
+    import kanbanger.tools as tools_mod
 
     def _boom(*_args, **_kwargs):
         raise OSError("disk full (simulated)")

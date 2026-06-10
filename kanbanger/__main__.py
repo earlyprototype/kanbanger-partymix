@@ -1,6 +1,6 @@
 """
 Entry point for running kanbanger MCP server as a module.
-Usage: python -m kanbanger_mcp
+Usage: python -m kanbanger
 """
 
 from .server import main

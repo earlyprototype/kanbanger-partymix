@@ -15,9 +15,9 @@ This is the single most important rule, so it comes first:
 
 The board is `<workspace>/_kanban.md` for the **current project** — where
 `<workspace>` is the `KANBANGER_WORKSPACE` env var, or the project's working
-directory if that's unset. Each project gets its own Kanbanger install
-(`.venv` + `.mcp.json`). There is no single global board, and Kanbanger is not a
-user-level tool — don't install or relocate it to user/global scope. The board
+directory if that's unset. The kanbanger **install** is global (one
+`kanbanger-mcp` on PATH — ADR 0002), but the **board** is per-project, wired
+by each project's own `.mcp.json`. There is no single global board. The board
 belongs to the project you're in.
 
 ## First contact
@@ -26,8 +26,10 @@ Before doing anything, read the `kanban://current-board` resource (or check for
 `_kanban.md` in the workspace) to see the current state.
 
 If `_kanban.md` does **not** exist, Kanbanger isn't set up in this project yet.
-Don't silently create it — tell the user and ask. If they agree, create the
-canonical 5-column board (see [Board format](#board-format-for-reference) below).
+Don't silently create it — tell the user and ask. If they agree, call the
+`setup_project` tool, which provisions the project idempotently (canonical
+5-column board, `.mcp.json`, agent touchpoint) — see
+[Board format](#board-format-for-reference) below for the schema it scaffolds.
 
 ## The tools
 
@@ -42,6 +44,7 @@ canonical 5-column board (see [Board format](#board-format-for-reference) below)
 | `reject_review(title, reason)` | Send a REVIEW task back with feedback |
 | `sync_to_github(dry_run?)` | Push the board to its GitHub Project |
 | `get_sync_status()` | Check sync state |
+| `setup_project()` | Provision this workspace (board scaffold, `.mcp.json`, touchpoints) — idempotent |
 
 Read-only resources, always available: `kanban://current-board`,
 `kanban://stats`, `kanban://sync-status`.
@@ -108,7 +111,10 @@ REVIEW items land with no status. Sync is one-way: local markdown → GitHub.
 ## If the tools aren't there
 
 If you don't see the Kanbanger tools in this session but the project has a
-`.mcp.json` referencing kanbanger, the per-project `.venv` probably isn't
-provisioned on this machine (it's gitignored, so fresh clones won't have it).
-Tell the user to run `python <partymix>/scripts/setup-venv.py` from the project
-root and restart the session. **Don't fall back to hand-editing the board.**
+`.mcp.json` referencing kanbanger, the global install is probably missing on
+this machine. Tell the user to install it once
+(`pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git`)
+and restart the session. If `.mcp.json` itself is missing, the project isn't
+provisioned yet — tell the user to run `kanbanger init` from the project root
+(or call `setup_project` once the server is available).
+**Don't fall back to hand-editing the board.**

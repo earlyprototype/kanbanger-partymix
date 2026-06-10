@@ -1,17 +1,27 @@
 #!/usr/bin/env python3
 """
-setup-venv.py — Provision a per-project Kanbanger MCP environment.
+setup-venv.py — [DEPRECATED INSTALLER] per-project Kanbanger provisioning.
 
-Creates `<PROJECT>/.venv`, installs the partymix package editable into it,
-writes `<PROJECT>/.mcp.json` pinned to that venv's python.exe, ensures
-`.venv/` is gitignored, and adds a Kanbanger onboarding stanza to
-`<PROJECT>/CLAUDE.md` so AI agents know to drive the board through the MCP
-tools (the always-loaded touchpoint the server's own instructions can't be,
-since they're only visible after the server has already launched).
+DEPRECATED (ADR 0002, issue #15): this script NO LONGER installs anything, and
+its remaining provisioning role has moved IN-MCP.
 
-This is the cure for the v2.1.0/partymix `kanbanger_mcp` import collision:
-each project gets its own isolated kanbanger install, so there is no
-system-wide pip surgery and no silent shadowing.
+The supported install path is now a SINGLE GLOBAL install, like any other MCP
+server:
+
+    pipx install <path-to-kanbanger-partymix>      # recommended
+    # or
+    pip install <path-to-kanbanger-partymix>
+
+That gives you a working `kanbanger-mcp` server on PATH with no per-project
+`.venv`. The old per-project venv only existed to dodge the `kanbanger_mcp`
+import collision; the v3 module rename (`kanbanger_mcp` -> `kanbanger`) removed
+that cause, so per-project installs are no longer needed.
+
+The supported PROVISIONING path is now the in-MCP `setup_project` tool (issue
+#15 step 3), or `kanbanger init` for CLI parity. This script is retained only
+as a thin shim: it imports the SAME provisioning helpers from
+`kanbanger.provision` and calls them, so it can never drift from the MCP tool.
+Do not extend it — add to `kanbanger/provision.py` instead.
 
 Usage:
     python <partymix>/scripts/setup-venv.py [PROJECT_DIR]
@@ -21,159 +31,74 @@ PROJECT_DIR defaults to the current working directory.
 Exit codes:
     0 - success
     1 - usage / preflight error
-    2 - subprocess failure (venv creation, pip install)
 """
 import argparse
-import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
 PARTYMIX_SOURCE = Path(__file__).resolve().parent.parent
-GITIGNORE_ENTRY = ".venv/"
-GITIGNORE_HEADER = "# Per-project venv created by kanbanger-partymix/scripts/setup-venv.py"
-CLAUDE_MD_START = "<!-- kanbanger:start -->"
-CLAUDE_MD_END = "<!-- kanbanger:end -->"
+
+# This script lives outside the package (hyphenated name in scripts/). When run
+# directly from a source checkout the package may not be importable yet, so make
+# the repo root importable before pulling the shared provisioning helpers. When
+# kanbanger is installed (pipx/pip), the import resolves from site-packages.
+if str(PARTYMIX_SOURCE) not in sys.path:
+    sys.path.insert(0, str(PARTYMIX_SOURCE))
+
+from kanbanger.provision import (  # noqa: E402  (sys.path tweak must precede)
+    CLAUDE_MD_END,
+    CLAUDE_MD_START,
+    GITIGNORE_ENTRY,
+    GITIGNORE_HEADER,
+    build_claude_md_block,
+    build_mcp_config,
+    ensure_claude_md_has_kanbanger,
+    ensure_gitignore_has_venv,
+    provision_project,
+    to_forward_slashes,
+)
+
+__all__ = [
+    # Re-exported for back-compat: existing tests import these off this script
+    # module by file path. The implementations now live in kanbanger.provision.
+    "CLAUDE_MD_END",
+    "CLAUDE_MD_START",
+    "GITIGNORE_ENTRY",
+    "GITIGNORE_HEADER",
+    "build_claude_md_block",
+    "build_mcp_config",
+    "ensure_claude_md_has_kanbanger",
+    "ensure_gitignore_has_venv",
+    "main",
+]
 
 
-def venv_python_path(venv_dir: Path) -> Path:
-    """Return the path to the venv's python interpreter for the host platform."""
-    if sys.platform.startswith("win"):
-        return venv_dir / "Scripts" / "python.exe"
-    return venv_dir / "bin" / "python"
+DEPRECATION_BANNER = """\
+============================================================================
+  setup-venv.py is DEPRECATED and installs NOTHING. Its provisioning role
+  has moved IN-MCP.
 
+  Install kanbanger ONCE, globally, like any other MCP server:
 
-def to_forward_slashes(p) -> str:
-    return str(p).replace("\\", "/")
+      pipx install "{source}"
+      # or:  pip install "{source}"
 
+  That puts `kanbanger-mcp` on your PATH. No per-project .venv is needed
+  (the venv only ever existed to dodge the old kanbanger_mcp import
+  collision, which the module rename removed — see ADR 0002).
 
-def build_mcp_config(project_dir: Path, venv_python: Path) -> dict:
-    project_path_fwd = to_forward_slashes(project_dir)
-    return {
-        "mcpServers": {
-            "kanbanger": {
-                "command": to_forward_slashes(venv_python),
-                "args": ["-m", "kanbanger_mcp"],
-                "env": {
-                    "KANBANGER_WORKSPACE": "${KANBANGER_WORKSPACE:-" + project_path_fwd + "}",
-                    "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
-                    "GITHUB_REPO": "${GITHUB_REPO:-}",
-                    "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER:-}",
-                },
-            }
-        }
-    }
-
-
-def ensure_gitignore_has_venv(project_dir: Path) -> None:
-    gitignore = project_dir / ".gitignore"
-    block = f"\n{GITIGNORE_HEADER}\n{GITIGNORE_ENTRY}\n"
-    if gitignore.exists():
-        content = gitignore.read_text(encoding="utf-8")
-        if GITIGNORE_ENTRY in content:
-            return
-        sep = "" if content.endswith("\n") else "\n"
-        gitignore.write_text(content + sep + block, encoding="utf-8")
-        print(f"  appended {GITIGNORE_ENTRY} to {gitignore}")
-    else:
-        gitignore.write_text(block.lstrip("\n"), encoding="utf-8")
-        print(f"  created {gitignore} with {GITIGNORE_ENTRY}")
-
-
-def build_claude_md_block(project_dir: Path) -> str:
-    """The Kanbanger onboarding stanza injected into a project's CLAUDE.md.
-
-    This is the always-loaded, pre-launch touchpoint. The server's own
-    `instructions` string carries the same intent, but an LLM can't see it
-    until the server is already running -- so in a project where the MCP isn't
-    loaded yet, this stanza is the only thing telling the agent to (a) drive
-    the board through the MCP tools rather than hand-editing `_kanban.md`,
-    (b) keep the board project-scoped, and (c) how to recover when the
-    per-project venv isn't provisioned (e.g. on a fresh clone).
-    """
-    return f"""{CLAUDE_MD_START}
-## Kanbanger: task board for this project
-
-This project tracks work on a Kanban board managed by the **Kanbanger MCP
-server**. The board lives at `_kanban.md` in the project root and is
-**project-scoped** -- configured here via `.mcp.json` + `.venv`, not globally.
-Don't install or move Kanbanger to user/global scope; the board belongs to
-this project.
-
-**For AI agents:**
-- **Always use the Kanbanger MCP tools** (`list_tasks`, `add_task`, `move_task`,
-  `delete_task`, `sync_to_github`, `get_sync_status`) to read or change the
-  board. **Never hand-edit `_kanban.md`** -- direct edits bypass validation,
-  locking, and atomic writes and will eventually corrupt the board or its
-  GitHub sync.
-- On first contact, read the `kanban://current-board` resource before acting.
-- **REVIEW gates DONE.** AI-completed work goes to REVIEW via `propose_done`,
-  never straight to DONE; a human approves REVIEW -> DONE via `approve_done`.
-  Never move your own work directly to DONE.
-
-**If the Kanbanger tools aren't available** in this session, the per-project
-`.venv` is probably not provisioned on this machine (it's gitignored, so a
-fresh clone won't have it). Re-provision and restart the session:
-
-```
-python <partymix>/scripts/setup-venv.py
-```
-{CLAUDE_MD_END}
+  PREFER provisioning via the MCP `setup_project` tool, or `kanbanger init`
+  for CLI parity. This script now only forwards to the same shared
+  provisioning code (kanbanger.provision). Pass --no-provision to skip.
+============================================================================
 """
-
-
-def ensure_claude_md_has_kanbanger(project_dir: Path) -> None:
-    """Idempotently add (or refresh) the Kanbanger stanza in <project>/CLAUDE.md.
-
-    - File absent          -> create it with the stanza.
-    - File present, no tag  -> append the stanza (existing content preserved).
-    - File present, tagged  -> replace the block between the markers, so a
-      re-run after a partymix upgrade refreshes the stanza without duplicating.
-    """
-    claude_md = project_dir / "CLAUDE.md"
-    block = build_claude_md_block(project_dir)
-    if not claude_md.exists():
-        claude_md.write_text(block, encoding="utf-8")
-        print(f"  created {claude_md} with the kanbanger stanza")
-        return
-
-    content = claude_md.read_text(encoding="utf-8")
-    start_idx = content.find(CLAUDE_MD_START)
-    if start_idx != -1:
-        end_idx = content.find(CLAUDE_MD_END, start_idx + len(CLAUDE_MD_START))
-        if end_idx != -1:
-            end_idx += len(CLAUDE_MD_END)
-            new_content = content[:start_idx] + block.rstrip("\n") + content[end_idx:]
-            if new_content != content:
-                claude_md.write_text(new_content, encoding="utf-8")
-                print(f"  refreshed the kanbanger stanza in {claude_md}")
-            else:
-                print(f"  kanbanger stanza in {claude_md} already up to date")
-            return
-        else:
-            print(f"  found orphan start marker in {claude_md}, replacing from that point")
-            new_content = content[:start_idx] + block
-            claude_md.write_text(new_content, encoding="utf-8")
-            print(f"  replaced orphan stanza in {claude_md}")
-            return
-
-    sep = "" if content.endswith("\n") else "\n"
-    claude_md.write_text(content + sep + "\n" + block, encoding="utf-8")
-    print(f"  appended kanbanger stanza to {claude_md}")
-
-
-def run(cmd, **kwargs):
-    print(f"  $ {' '.join(str(c) for c in cmd)}")
-    result = subprocess.run(cmd, **kwargs)
-    if result.returncode != 0:
-        sys.exit(2)
-    return result
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="Provision a per-project venv with kanbanger-partymix installed.",
+        description="[DEPRECATED installer] Provision a project for the GLOBAL "
+                    "kanbanger install. Creates no venv and installs nothing; "
+                    "forwards to kanbanger.provision.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -198,6 +123,16 @@ def main(argv=None) -> int:
         action="store_true",
         help="Skip adding the Kanbanger stanza to the project's CLAUDE.md.",
     )
+    parser.add_argument(
+        "--no-board",
+        action="store_true",
+        help="Skip scaffolding _kanban.md (leave the board to first-contact).",
+    )
+    parser.add_argument(
+        "--no-provision",
+        action="store_true",
+        help="Print the deprecation/install banner and exit without provisioning.",
+    )
     args = parser.parse_args(argv)
 
     project_dir = Path(args.project_dir).resolve()
@@ -208,76 +143,39 @@ def main(argv=None) -> int:
         print(f"ERROR: partymix source not found at {PARTYMIX_SOURCE}", file=sys.stderr)
         return 1
 
-    venv_dir = project_dir / ".venv"
-    venv_python = venv_python_path(venv_dir)
+    # Deprecation / install banner — always shown, because this script no
+    # longer installs anything (ADR 0002). Global install is the supported path.
+    print(DEPRECATION_BANNER.format(source=to_forward_slashes(PARTYMIX_SOURCE)))
 
-    print("kanbanger-partymix per-project venv setup")
+    if args.no_provision:
+        print("--no-provision set: nothing to do (and nothing was installed).")
+        return 0
+
+    print("Provisioning project (no install — global kanbanger-mcp expected on PATH):")
     print(f"  project: {project_dir}")
-    print(f"  venv:    {venv_dir}")
     print(f"  source:  {PARTYMIX_SOURCE}")
     print()
 
-    if venv_dir.exists():
-        print("Step 1: venv already exists, reusing.")
-    else:
-        print("Step 1: creating venv...")
-        run([sys.executable, "-m", "venv", str(venv_dir)])
-
-    print("\nStep 2: upgrading pip in venv...")
-    run([str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
-
-    print("\nStep 3: installing partymix editable with [mcp] extras...")
-    run([str(venv_python), "-m", "pip", "install", "-e", f"{PARTYMIX_SOURCE}[mcp]", "--quiet"])
-
-    print("\nStep 4: verifying kanbanger_mcp resolves to partymix source...")
-    check = subprocess.run(
-        [
-            str(venv_python),
-            "-c",
-            "import kanbanger_mcp, os; "
-            "print(os.path.dirname(os.path.abspath(kanbanger_mcp.__file__)))",
-        ],
-        capture_output=True,
-        text=True,
+    # Single shared code path — identical to the MCP `setup_project` tool.
+    # AGENTS.md is augmented only if present (provision_project handles that),
+    # so no separate flag is exposed here.
+    result = provision_project(
+        project_dir,
+        scaffold_board=not args.no_board,
+        write_mcp_json=not args.no_mcp_json,
+        write_gitignore=not args.no_gitignore,
+        write_claude_md=not args.no_claude_md,
+        write_agents_md=True,
     )
-    if check.returncode != 0:
-        print("  FAIL: could not import kanbanger_mcp in the venv", file=sys.stderr)
-        print(check.stderr, file=sys.stderr)
-        return 2
-    resolved = Path(check.stdout.strip())
-    expected = (PARTYMIX_SOURCE / "kanbanger_mcp").resolve()
-    if resolved.resolve() == expected:
-        print(f"  OK: kanbanger_mcp -> {resolved}")
-    else:
-        print(f"  WARN: expected {expected}")
-        print(f"        got      {resolved}")
-        print("  (editable installs can show site-packages paths; verify manually.)")
 
-    if not args.no_mcp_json:
-        mcp_json = project_dir / ".mcp.json"
-        print(f"\nStep 5: writing {mcp_json}")
-        if mcp_json.exists():
-            backup = project_dir / ".mcp.json.backup"
-            print(f"  existing file backed up to {backup}")
-            backup.write_text(mcp_json.read_text(encoding="utf-8"), encoding="utf-8")
-        config = build_mcp_config(project_dir, venv_python)
-        mcp_json.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
-        print(f"  wrote .mcp.json with command pinned to {venv_python}")
+    print(result.summary())
 
-    if not args.no_gitignore:
-        print("\nStep 6: ensuring .venv/ is gitignored")
-        ensure_gitignore_has_venv(project_dir)
-
-    if not args.no_claude_md:
-        print("\nStep 7: adding the Kanbanger stanza to CLAUDE.md")
-        ensure_claude_md_has_kanbanger(project_dir)
-
-    print("\nDone.")
+    print()
     print("Next:")
+    print(f"  - Ensure kanbanger is installed globally: pipx install \"{to_forward_slashes(PARTYMIX_SOURCE)}\"")
     print(f"  - Open a fresh Claude Code session in {project_dir}")
     print("  - Confirm kanbanger MCP loads (paste '/mcp' or call list_tasks)")
-    print("  - CLAUDE.md now tells agents to use the MCP tools, not hand-edit the board")
-    print("  - Run `kanban-doctor` (after Step 3 of MVP plan ports it to partymix)")
+    print("  - PREFER the in-MCP `setup_project` tool (or `kanbanger init`) next time.")
     return 0
 
 

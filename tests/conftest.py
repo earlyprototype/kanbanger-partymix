@@ -9,7 +9,7 @@ import pytest
 
 
 # --- registration-capturing stub ----------------------------------
-# kanbanger_mcp.tools / resources / prompts register their callables
+# kanbanger.tools / resources / prompts register their callables
 # via decorators on a FastMCP server. Unit tests don't need a real
 # server — only the decorated functions, so they can be called
 # directly. _StubMCPServer mirrors FastMCP's tool()/resource()/
@@ -99,7 +99,7 @@ def kanban_workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture
 def registered_tools(kanban_workspace: Path) -> dict[str, Callable]:
-    """Import kanbanger_mcp.tools and return the registered tool map.
+    """Import kanbanger.tools and return the registered tool map.
 
     `register_tools(stub)` populates `stub.tools` with each decorated
     function; the test calls them directly
@@ -108,7 +108,7 @@ def registered_tools(kanban_workspace: Path) -> dict[str, Callable]:
     Depends on `kanban_workspace` so KANBANGER_WORKSPACE points at
     the temp board before any tool is exercised.
     """
-    from kanbanger_mcp.tools import register_tools
+    from kanbanger.tools import register_tools
 
     stub = _StubMCPServer()
     register_tools(stub)
@@ -118,7 +118,7 @@ def registered_tools(kanban_workspace: Path) -> dict[str, Callable]:
 @pytest.fixture
 def registered_prompts(kanban_workspace: Path) -> dict[str, Callable]:
     """Same as registered_tools, but for prompts."""
-    from kanbanger_mcp.prompts import register_prompts
+    from kanbanger.prompts import register_prompts
 
     stub = _StubMCPServer()
     register_prompts(stub)

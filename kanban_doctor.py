@@ -10,13 +10,16 @@ Adapted from v2.1.0's kanban_doctor.py (frozen at _kanbanger/). Partymix
 additions:
   - install-collision detector (flags if multiple kanbanger dists are
     installed, e.g. v2.1.0 and partymix both reachable via pip)
-  - kanbanger_mcp.__file__ surfaced in the importable check (catches
+  - kanbanger.__file__ surfaced in the importable check (catches
     cases where partymix code is being tested but a different package
     is winning the import resolution race)
   - .kanban.json schema_version check (R8)
   - dist-vs-package version-consistency check (catches the partymix
     setup.py 0.0.1 / __version__ 2.1.0 mismatch surfaced during MVP
     Step 1)
+  - ADR 0002 binding triple in the header (issue #15 step 5):
+    `workspace resolved = X -> board = Y -> key = Z`, rendered from one
+    kanbanger.binding.resolve_binding() call
 
 Usage:
     kanban-doctor                    # run from a workspace with _kanban.md
@@ -89,6 +92,40 @@ def _section(text):
     print()
     print(f"{BOLD}{text}{RESET}")
     print("-" * len(text))
+
+
+# ----- ADR 0002 binding triple (issue #15 step 5) -------------------------
+
+def print_binding(start_dir):
+    """Print the ADR 0002 observability triple under the `workspace:` header.
+
+    `workspace resolved = X -> board = Y -> key = Z` is rendered from ONE
+    kanbanger.binding.resolve_binding() call -- the exact chain the MCP
+    server uses (env pin > walk-up discovery > start dir), so the doctor
+    shows the binding a server launched against this workspace would use.
+
+    Deliberately a plain print, not an _emit check: the triple is identity
+    context for every check below, and none of its states is a failure --
+    an unkeyed (legacy) board and an unprovisioned dir are both valid, so
+    this line never touches the counters or the exit-code policy.
+    """
+    try:
+        from kanbanger.binding import resolve_binding
+    except ImportError as e:
+        # Doctor must keep working in the broken installs it diagnoses;
+        # check_kanbanger_importable reports the import problem properly.
+        print(f"binding:   unavailable (kanbanger.binding not importable: {e})")
+        return
+    binding = resolve_binding(start_dir)
+    board = binding.board_path or "none"
+    if binding.board_key:
+        key = binding.board_key
+    elif binding.board_path:
+        key = "none (legacy unkeyed board)"
+    else:
+        key = "none"
+    print(f"binding:   workspace resolved = {binding.workspace} "
+          f"-> board = {board} -> key = {key}")
 
 
 # ----- Individual checks -------------------------------------------------
@@ -359,7 +396,7 @@ def check_status_field(projects):
         return
     opts = {o["name"] for o in status_field["options"]}
     # Partymix is the 5-column release: BACKLOG/TODO/DOING/REVIEW/DONE
-    # is auto-injected by kanbanger_mcp.server at startup, and
+    # is auto-injected by kanbanger.server at startup, and
     # sync_kanban.LocalBoard.parse maps `## REVIEW` -> Status="Review".
     # The GH Project's Status field must therefore expose all five
     # options or REVIEW items land with no Status. See
@@ -435,13 +472,13 @@ def check_mcp_installed():
         return False
 
 
-def check_kanbanger_mcp_importable():
+def check_kanbanger_importable():
     """Surface __file__ so install-source surprises are visible."""
-    label = "kanbanger_mcp package"
+    label = "kanbanger package"
     try:
-        import kanbanger_mcp
-        version = getattr(kanbanger_mcp, "__version__", "unknown")
-        source_path = os.path.dirname(os.path.abspath(kanbanger_mcp.__file__))
+        import kanbanger
+        version = getattr(kanbanger, "__version__", "unknown")
+        source_path = os.path.dirname(os.path.abspath(kanbanger.__file__))
         _emit(PASS_TAG, label,
               f"importable (version {version}) from {source_path}")
         return source_path, version
@@ -470,7 +507,7 @@ def check_install_collision():
         names_versions = ", ".join(f"{n}=={v}" for n, v in found)
         _emit(WARN_TAG, label,
               f"multiple kanbanger dists installed: {names_versions}",
-              "Both packages expose the same importable name (`kanbanger_mcp`). "
+              "Multiple kanbanger dists installed; check for shadowing conflicts. "
               "Use scripts/setup-venv.py (per-project venv) to isolate, "
               "or `pip uninstall` the one not needed for this project.")
     elif len(found) == 1:
@@ -487,7 +524,7 @@ def check_version_consistency(import_version):
     """Catch dist-vs-package version drift (e.g. setup.py 0.0.1 / __version__ 2.1.0)."""
     label = "Dist / package version consistency"
     if import_version is None:
-        _emit(SKIP_TAG, label, "skipped (kanbanger_mcp not importable)")
+        _emit(SKIP_TAG, label, "skipped (kanbanger not importable)")
         return
     try:
         import importlib.metadata as md
@@ -510,8 +547,8 @@ def check_version_consistency(import_version):
         _emit(PASS_TAG, label, f"{dist_name} dist=={dist_version}, package=={import_version}")
     else:
         _emit(WARN_TAG, label,
-              f"{dist_name} dist=={dist_version} but kanbanger_mcp.__version__=={import_version}",
-              "Either update setup.py version, or update kanbanger_mcp/__init__.py "
+              f"{dist_name} dist=={dist_version} but kanbanger.__version__=={import_version}",
+              "Either update setup.py version, or update kanbanger/__init__.py "
               "__version__ string. They should match.")
 
 
@@ -545,6 +582,7 @@ def main():
 
     print(f"{BOLD}kanban-doctor (partymix) -- preflight checks{RESET}")
     print(f"workspace: {workspace}")
+    print_binding(workspace)
 
     _section("Environment")
     check_python_version()
@@ -576,7 +614,7 @@ def main():
 
     _section("MCP server")
     check_mcp_installed()
-    _src, import_version = check_kanbanger_mcp_importable()
+    _src, import_version = check_kanbanger_importable()
 
     _section("Install integrity (partymix additions)")
     check_install_collision()
