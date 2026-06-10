@@ -29,6 +29,13 @@ additions:
     each GitHub value came from (shell env / workspace .env / not set)
     and notes when the ambient env disagrees with what the project's
     .mcp.json would provide to a launched server.
+  - callable core (issue #23): run_doctor() runs every check and returns
+    a structured DoctorReport (per-check {section, name, status, detail,
+    remediation} plus the binding triple, config sources, and local-only
+    state). This CLI and the MCP `doctor` tool consume the SAME core —
+    the CLI echoes the lines progressively (byte-identical to the
+    pre-refactor output), the tool renders them verdict-first via
+    render_report(). This module must never import the mcp SDK.
 
 Usage:
     kanban-doctor                    # run from a workspace with _kanban.md
@@ -44,11 +51,14 @@ Exit codes:
 """
 
 import argparse
+import contextvars
 import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional, Tuple
 
 try:
     from dotenv import load_dotenv
@@ -89,51 +99,173 @@ FAIL_TAG = f"{RED}[FAIL]{RESET}"
 SKIP_TAG = "[SKIP]"
 
 
+# ----- Structured results (issue #23: ONE core for CLI + MCP tool) --------
+
+_STATUS_FOR_TAG = {PASS_TAG: "PASS", WARN_TAG: "WARN", FAIL_TAG: "FAIL",
+                   SKIP_TAG: "SKIP"}
+_MODULE_TAGS = {"PASS": PASS_TAG, "WARN": WARN_TAG, "FAIL": FAIL_TAG,
+                "SKIP": SKIP_TAG}
+_PLAIN_TAGS = {"PASS": "[PASS]", "WARN": "[WARN]", "FAIL": "[FAIL]",
+               "SKIP": "[SKIP]"}
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """One check outcome — the structured form of an `_emit` line.
+
+    `section` is the doctor section the check ran under (None only for
+    direct ad-hoc calls outside run_doctor). `remediation` is None for
+    results that carry no `-> fix` line.
+    """
+
+    section: Optional[str]
+    name: str
+    status: str  # "PASS" | "WARN" | "FAIL" | "SKIP"
+    detail: str
+    remediation: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DoctorReport:
+    """Everything one run_doctor() invocation produced.
+
+    body_lines is the EXACT text the CLI prints (plain tags, no ANSI),
+    line for line — render_report() and the echoing CLI both derive from
+    the same _RunContext, so the two surfaces cannot drift. counts uses
+    the legacy lowercase keys ("pass"/"warn"/"fail"/"skip").
+    """
+
+    workspace: str
+    binding_line: str
+    binding: Optional[dict]  # {workspace, board_path, board_key} or None
+    local_only: bool
+    local_only_forced: bool
+    config_source_lines: Tuple[str, ...]
+    results: Tuple[CheckResult, ...]
+    counts: dict
+    body_lines: Tuple[str, ...]
+
+    @property
+    def verdict(self) -> str:
+        """Overall verdict: local-only (issue #18) is a HEALTHY state."""
+        if self.counts["fail"] > 0:
+            return "problems found"
+        if self.local_only:
+            return "healthy (local-only)"
+        return "healthy"
+
+
+def _result_lines(status, name, detail, remediation, tags):
+    """Render one check result to its CLI line(s).
+
+    THE single format definition, shared by the legacy direct-call path,
+    the echoing CLI run, and the MCP render — exact-output parity by
+    construction.
+    """
+    lines = [f"  {tags[status]} {name}: {detail}"]
+    if remediation:
+        lines.append(f"         -> {remediation}")
+    return lines
+
+
+class _RunContext:
+    """Mutable collector for one run_doctor() invocation.
+
+    Collects structured CheckResults AND the exact CLI body text (plain
+    tags). When `echo` is True the colored variant of each line prints as
+    it is produced — the CLI's progressive output, byte-identical to the
+    pre-refactor behavior. When False nothing is printed (the MCP stdio
+    transport owns stdout).
+    """
+
+    def __init__(self, echo: bool = False) -> None:
+        self.echo = echo
+        self.section: Optional[str] = None
+        self.results: list = []
+        self.counts = {"pass": 0, "warn": 0, "fail": 0, "skip": 0}
+        self.body_lines: list = []
+
+    def line(self, plain: str, colored: Optional[str] = None) -> None:
+        self.body_lines.append(plain)
+        if self.echo:
+            print(colored if colored is not None else plain)
+
+    def set_section(self, name: str) -> None:
+        self.section = name
+        self.line("", "")
+        self.line(name, f"{BOLD}{name}{RESET}")
+        self.line("-" * len(name))
+
+    def add(self, status: str, name: str, detail: str,
+            remediation: Optional[str]) -> None:
+        self.results.append(CheckResult(
+            section=self.section, name=name, status=status,
+            detail=detail, remediation=remediation,
+        ))
+        self.counts[status.lower()] += 1
+        plain = _result_lines(status, name, detail, remediation, _PLAIN_TAGS)
+        colored = _result_lines(status, name, detail, remediation, _MODULE_TAGS)
+        for plain_line, colored_line in zip(plain, colored):
+            self.line(plain_line, colored_line)
+
+
+# Active run context. A ContextVar (not a bare module global) so two
+# concurrent doctor runs inside one long-lived MCP server process can
+# never interleave their results.
+_ACTIVE_RUN: "contextvars.ContextVar[Optional[_RunContext]]" = (
+    contextvars.ContextVar("kanban_doctor_active_run", default=None)
+)
+
+# Legacy module-level counters: only the DIRECT-call path of _emit uses
+# them (unit tests invoke individual checks and read these in place; see
+# tests/test_kanban_doctor.py::_capture_check). run_doctor() collects into
+# its own _RunContext, so embedded runs never pollute these.
 _results = {"pass": 0, "warn": 0, "fail": 0, "skip": 0}
 
 
 def _emit(tag, label, message, fix=None):
-    print(f"  {tag} {label}: {message}")
-    if fix:
-        print(f"         -> {fix}")
-    if tag == PASS_TAG:
-        _results["pass"] += 1
-    elif tag == WARN_TAG:
-        _results["warn"] += 1
-    elif tag == FAIL_TAG:
-        _results["fail"] += 1
-    else:
-        _results["skip"] += 1
+    """Sink for every check outcome.
 
-
-def _section(text):
-    print()
-    print(f"{BOLD}{text}{RESET}")
-    print("-" * len(text))
+    Inside a run_doctor() run (the CLI entry point and the MCP `doctor`
+    tool) the active _RunContext collects a structured CheckResult — and,
+    for the CLI, echoes the exact pre-refactor line. Called DIRECTLY (no
+    active run: unit tests, REPL) it keeps the original behavior: print
+    the line and bump the module-level counters.
+    """
+    status = _STATUS_FOR_TAG.get(tag, "SKIP")
+    ctx = _ACTIVE_RUN.get()
+    if ctx is not None:
+        ctx.add(status, label, message, fix)
+        return
+    for line in _result_lines(status, label, message, fix, {status: tag}):
+        print(line)
+    _results[status.lower()] += 1
 
 
 # ----- ADR 0002 binding triple (issue #15 step 5) -------------------------
 
-def print_binding(start_dir):
-    """Print the ADR 0002 observability triple under the `workspace:` header.
+def binding_summary(start_dir) -> Tuple[str, Optional[dict]]:
+    """The ADR 0002 observability triple, structured.
 
-    `workspace resolved = X -> board = Y -> key = Z` is rendered from ONE
-    kanbanger.binding.resolve_binding() call -- the exact chain the MCP
-    server uses (env pin > walk-up discovery > start dir), so the doctor
-    shows the binding a server launched against this workspace would use.
+    Returns (line, binding): `line` is the text rendered after the
+    `binding:   ` prefix — `workspace resolved = X -> board = Y -> key = Z`
+    — from ONE kanbanger.binding.resolve_binding() call (the exact chain
+    the MCP server uses: env pin > walk-up discovery > start dir), so the
+    doctor shows the binding a server launched against this workspace
+    would use. `binding` is {"workspace", "board_path", "board_key"}, or
+    None when kanbanger.binding isn't importable (the doctor must keep
+    working in the broken installs it diagnoses;
+    check_kanbanger_importable reports the import problem properly).
 
-    Deliberately a plain print, not an _emit check: the triple is identity
-    context for every check below, and none of its states is a failure --
-    an unkeyed (legacy) board and an unprovisioned dir are both valid, so
-    this line never touches the counters or the exit-code policy.
+    Deliberately identity context, not an _emit check: none of the
+    triple's states is a failure -- an unkeyed (legacy) board and an
+    unprovisioned dir are both valid, so this never touches the counters
+    or the exit-code policy.
     """
     try:
         from kanbanger.binding import resolve_binding
     except ImportError as e:
-        # Doctor must keep working in the broken installs it diagnoses;
-        # check_kanbanger_importable reports the import problem properly.
-        print(f"binding:   unavailable (kanbanger.binding not importable: {e})")
-        return
+        return f"unavailable (kanbanger.binding not importable: {e})", None
     binding = resolve_binding(start_dir)
     board = binding.board_path or "none"
     if binding.board_key:
@@ -142,8 +274,20 @@ def print_binding(start_dir):
         key = "none (legacy unkeyed board)"
     else:
         key = "none"
-    print(f"binding:   workspace resolved = {binding.workspace} "
-          f"-> board = {board} -> key = {key}")
+    line = (f"workspace resolved = {binding.workspace} "
+            f"-> board = {board} -> key = {key}")
+    return line, {
+        "workspace": binding.workspace,
+        "board_path": binding.board_path,
+        "board_key": binding.board_key,
+    }
+
+
+def print_binding(start_dir):
+    """Print the binding triple under the `workspace:` header (direct-call
+    convenience; run_doctor renders the same line via binding_summary)."""
+    line, _ = binding_summary(start_dir)
+    print(f"binding:   {line}")
 
 
 # ----- Individual checks -------------------------------------------------
@@ -287,14 +431,15 @@ def _mcp_divergence_notes(mcp_literals):
     return notes
 
 
-def print_config_sources(env_file_vals, mcp_exists, mcp_literals, forced, local_only):
+def config_source_lines(env_file_vals, mcp_exists, mcp_literals, forced, local_only):
     """Issue #18 item 2: state WHERE each GitHub value came from and flag
     ambient-vs-.mcp.json disagreement.
 
-    Plain prints like print_binding -- informational context, never
-    counted, never exit-affecting. The checks below still consume the
-    ambient env only (beyond the local-only gating of the not-set case).
+    Returns the exact lines the CLI prints (informational context, never
+    counted, never exit-affecting). The checks still consume the ambient
+    env only (beyond the local-only gating of the not-set case).
     """
+    lines = []
     for var in GITHUB_SYNC_VARS:
         effective = os.environ.get(var)
         if not effective:
@@ -305,16 +450,25 @@ def print_config_sources(env_file_vals, mcp_exists, mcp_literals, forced, local_
             origin = "shell env"
         if effective and var != "GITHUB_TOKEN":
             origin += f" ('{effective}')"
-        print(f"  {var}: {origin}")
+        lines.append(f"  {var}: {origin}")
     if mcp_exists and mcp_literals is None:
-        print("  note: .mcp.json present but unparseable -- cannot compare project config")
+        lines.append("  note: .mcp.json present but unparseable -- cannot compare project config")
     elif mcp_exists:
         for note in _mcp_divergence_notes(mcp_literals):
-            print(f"  {note}")
+            lines.append(f"  {note}")
     if local_only and forced:
-        print("  local-only mode (--local-only) -- missing GitHub sync config will SKIP, not FAIL")
+        lines.append("  local-only mode (--local-only) -- missing GitHub sync config will SKIP, not FAIL")
     elif local_only:
-        print("  local-only mode -- GitHub sync not configured; GitHub checks skip instead of fail")
+        lines.append("  local-only mode -- GitHub sync not configured; GitHub checks skip instead of fail")
+    return lines
+
+
+def print_config_sources(env_file_vals, mcp_exists, mcp_literals, forced, local_only):
+    """Print the config-source attribution (direct-call convenience;
+    run_doctor renders the same lines via config_source_lines)."""
+    for line in config_source_lines(env_file_vals, mcp_exists, mcp_literals,
+                                    forced, local_only):
+        print(line)
 
 
 def check_token_present(local_only=False):
@@ -726,6 +880,133 @@ def check_version_consistency(import_version):
               "__version__ string. They should match.")
 
 
+# ----- Callable core (issue #23) ------------------------------------------
+
+def run_doctor(workspace, *, no_network: bool = False,
+               local_only_flag: bool = False,
+               echo: bool = False) -> DoctorReport:
+    """Run every doctor check against `workspace`; return a DoctorReport.
+
+    The ONE implementation behind both surfaces:
+      - the CLI (main) calls with echo=True: every line prints as it is
+        produced — the exact pre-refactor output, colors and all;
+      - the MCP `doctor` tool calls with echo=False: nothing is printed
+        (stdout is the MCP stdio transport) and the tool renders the
+        collected report via render_report().
+
+    `no_network` mirrors --no-network; `local_only_flag` mirrors
+    --local-only (auto-detection still applies when False). `workspace`
+    should be an absolute, resolved path (callers resolve; the value is
+    rendered verbatim in the header).
+    """
+    workspace = Path(workspace)
+    ctx = _RunContext(echo=echo)
+    run_token = _ACTIVE_RUN.set(ctx)
+    try:
+        ctx.line("kanban-doctor (partymix) -- preflight checks",
+                 f"{BOLD}kanban-doctor (partymix) -- preflight checks{RESET}")
+        ctx.line(f"workspace: {workspace}")
+        binding_line, binding_info = binding_summary(workspace)
+        ctx.line(f"binding:   {binding_line}")
+
+        ctx.set_section("Environment")
+        check_python_version()
+        check_env_file(workspace)  # merges workspace .env into os.environ
+
+        # Issue #18: detection must run AFTER the .env merge above so the
+        # effective env is what the credential checks below will consume.
+        env_file_vals = read_env_file_values(workspace)
+        mcp_exists, mcp_literals = read_mcp_project_env(workspace)
+        local_only = local_only_flag or is_local_only(env_file_vals, mcp_literals)
+
+        ctx.set_section("GitHub config sources")
+        cfg_lines = config_source_lines(env_file_vals, mcp_exists, mcp_literals,
+                                        local_only_flag, local_only)
+        for line in cfg_lines:
+            ctx.line(line)
+
+        ctx.set_section("GitHub credentials")
+        token = check_token_present(local_only)
+        check_token_format(token)
+        check_token_works(token, no_network)
+
+        ctx.set_section("Repo and Projects")
+        repo = check_repo_format(local_only)
+        if token and repo and not no_network:
+            repo_ok = check_repo_accessible(token, repo, no_network)
+            if repo_ok:
+                projects = check_projects_v2_access(token, repo, no_network)
+                check_status_field(projects)
+            else:
+                _emit(SKIP_TAG, "Token can access Projects V2", "skipped (repo not accessible)")
+                _emit(SKIP_TAG, "Project Status field has required options", "skipped (repo not accessible)")
+        else:
+            _emit(SKIP_TAG, "Repo visible to token", "skipped (prerequisites)")
+            _emit(SKIP_TAG, "Token can access Projects V2", "skipped (prerequisites)")
+            _emit(SKIP_TAG, "Project Status field has required options", "skipped (prerequisites)")
+
+        ctx.set_section("Workspace")
+        check_kanban_file(workspace)
+        check_state_file(workspace)
+
+        ctx.set_section("MCP server")
+        check_mcp_installed()
+        _src, import_version = check_kanbanger_importable()
+
+        ctx.set_section("Install integrity (partymix additions)")
+        check_install_collision()
+        check_version_consistency(import_version)
+
+        ctx.line("", "")
+        ctx.line("Summary", f"{BOLD}Summary{RESET}")
+        ctx.line(f"  [PASS]: {ctx.counts['pass']}",
+                 f"  {PASS_TAG}: {ctx.counts['pass']}")
+        ctx.line(f"  [WARN]: {ctx.counts['warn']}",
+                 f"  {WARN_TAG}: {ctx.counts['warn']}")
+        ctx.line(f"  [FAIL]: {ctx.counts['fail']}",
+                 f"  {FAIL_TAG}: {ctx.counts['fail']}")
+        if ctx.counts["skip"]:
+            ctx.line(f"  {SKIP_TAG}: {ctx.counts['skip']}")
+    finally:
+        _ACTIVE_RUN.reset(run_token)
+
+    return DoctorReport(
+        workspace=str(workspace),
+        binding_line=binding_line,
+        binding=binding_info,
+        local_only=local_only,
+        local_only_forced=local_only_flag,
+        config_source_lines=tuple(cfg_lines),
+        results=tuple(ctx.results),
+        counts=dict(ctx.counts),
+        body_lines=tuple(ctx.body_lines),
+    )
+
+
+def render_report(report: DoctorReport) -> str:
+    """Render a DoctorReport as verdict-first plain text (no ANSI color).
+
+    The consumer is the MCP `doctor` tool (issue #23): overall verdict on
+    line 1 so an agent can relay health at a glance, then the EXACT body
+    the CLI prints — header, binding triple, config sources, per-section
+    check lines with remediations, summary counts — with plain
+    [PASS]/[WARN]/[FAIL]/[SKIP] tags.
+    """
+    counts = report.counts
+    if counts["fail"] > 0:
+        tail = (f" -- {counts['fail']} check(s) failed; each [FAIL] line "
+                f"below carries its remediation")
+    elif report.local_only:
+        tail = " -- GitHub sync not configured; the local board is fully operational"
+    else:
+        tail = ""
+    if counts["fail"] == 0 and counts["warn"]:
+        tail += f" ({counts['warn']} warning(s) noted)"
+    lines = [f"verdict: {report.verdict}{tail}", ""]
+    lines.extend(report.body_lines)
+    return "\n".join(lines)
+
+
 # ----- Entry point -------------------------------------------------------
 
 def main():
@@ -761,68 +1042,16 @@ def main():
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
+    report = run_doctor(
+        workspace,
+        no_network=args.no_network,
+        local_only_flag=args.local_only,
+        echo=True,
+    )
 
-    print(f"{BOLD}kanban-doctor (partymix) -- preflight checks{RESET}")
-    print(f"workspace: {workspace}")
-    print_binding(workspace)
-
-    _section("Environment")
-    check_python_version()
-    check_env_file(workspace)  # merges workspace .env into os.environ
-
-    # Issue #18: detection must run AFTER the .env merge above so the
-    # effective env is what the credential checks below will consume.
-    env_file_vals = read_env_file_values(workspace)
-    mcp_exists, mcp_literals = read_mcp_project_env(workspace)
-    local_only = args.local_only or is_local_only(env_file_vals, mcp_literals)
-
-    _section("GitHub config sources")
-    print_config_sources(env_file_vals, mcp_exists, mcp_literals,
-                         args.local_only, local_only)
-
-    _section("GitHub credentials")
-    token = check_token_present(local_only)
-    check_token_format(token)
-    check_token_works(token, args.no_network)
-
-    _section("Repo and Projects")
-    repo = check_repo_format(local_only)
-    if token and repo and not args.no_network:
-        repo_ok = check_repo_accessible(token, repo, args.no_network)
-        if repo_ok:
-            projects = check_projects_v2_access(token, repo, args.no_network)
-            check_status_field(projects)
-        else:
-            _emit(SKIP_TAG, "Token can access Projects V2", "skipped (repo not accessible)")
-            _emit(SKIP_TAG, "Project Status field has required options", "skipped (repo not accessible)")
-    else:
-        _emit(SKIP_TAG, "Repo visible to token", "skipped (prerequisites)")
-        _emit(SKIP_TAG, "Token can access Projects V2", "skipped (prerequisites)")
-        _emit(SKIP_TAG, "Project Status field has required options", "skipped (prerequisites)")
-
-    _section("Workspace")
-    check_kanban_file(workspace)
-    check_state_file(workspace)
-
-    _section("MCP server")
-    check_mcp_installed()
-    _src, import_version = check_kanbanger_importable()
-
-    _section("Install integrity (partymix additions)")
-    check_install_collision()
-    check_version_consistency(import_version)
-
-    print()
-    print(f"{BOLD}Summary{RESET}")
-    print(f"  {PASS_TAG}: {_results['pass']}")
-    print(f"  {WARN_TAG}: {_results['warn']}")
-    print(f"  {FAIL_TAG}: {_results['fail']}")
-    if _results["skip"]:
-        print(f"  {SKIP_TAG}: {_results['skip']}")
-
-    if _results["fail"] > 0:
+    if report.counts["fail"] > 0:
         sys.exit(1)
-    if args.strict and _results["warn"] > 0:
+    if args.strict and report.counts["warn"] > 0:
         sys.exit(1)
     sys.exit(0)
 
