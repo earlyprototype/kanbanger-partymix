@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-kanban-doctor (partymix port) -- preflight checks for kanbanger-partymix.
+kanban-doctor (partymix port) -- preflight checks for kanbanger.
 
-Verifies your environment is correctly configured to run kanbanger-partymix
+Verifies your environment is correctly configured to run kanbanger
 as both a CLI tool and an MCP server. Each check produces PASS / WARN / FAIL
 with a specific remediation pointer.
 
 Adapted from v2.1.0's kanban_doctor.py (frozen at _kanbanger/). Partymix
 additions:
   - install-collision detector (flags if multiple kanbanger dists are
-    installed, e.g. v2.1.0 and partymix both reachable via pip)
+    installed, e.g. v2.1.0 and partymix both reachable via pip). Since
+    the PyPI rename (issue #22) it also flags a lone legacy dist —
+    kanban-project-sync or the pre-rename kanbanger-partymix — as a
+    stale install with a `pip uninstall` remediation
   - kanbanger.__file__ surfaced in the importable check (catches
     cases where partymix code is being tested but a different package
     is winning the import resolution race)
@@ -72,7 +75,16 @@ except ImportError:
 GITHUB_API = "https://api.github.com/graphql"
 CLASSIC_PAT_RE = re.compile(r"^ghp_[A-Za-z0-9]{36}$")
 EXPECTED_STATE_SCHEMA_VERSION = 1
-KNOWN_KANBANGER_DISTS = ("kanban-project-sync", "kanbanger-partymix")
+# Dist names this project has shipped under. CANONICAL_DIST is the live
+# PyPI name (renamed from kanbanger-partymix for the 3.0 PyPI release,
+# issue #22). Anything in LEGACY_KANBANGER_DISTS is a stale install from
+# an earlier era (v2's kanban-project-sync, the pre-rename partymix dist)
+# and should be uninstalled in favour of the canonical dist. Order matters
+# in KNOWN_KANBANGER_DISTS: version-consistency reads the first installed
+# dist, so the canonical name wins when both old and new are present.
+CANONICAL_DIST = "kanbanger"
+LEGACY_KANBANGER_DISTS = ("kanban-project-sync", "kanbanger-partymix")
+KNOWN_KANBANGER_DISTS = (CANONICAL_DIST,) + LEGACY_KANBANGER_DISTS
 # The two env vars that decide whether GitHub sync is configured at all
 # (GITHUB_PROJECT_NUMBER is an optional refinement, not a config signal).
 GITHUB_SYNC_VARS = ("GITHUB_TOKEN", "GITHUB_REPO")
@@ -857,7 +869,16 @@ def check_kanbanger_importable():
 
 
 def check_install_collision():
-    """Flag when more than one kanbanger dist is installed in the active Python."""
+    """Flag multi-dist collisions AND stale legacy dists (issue #22 rename).
+
+    Three WARN shapes:
+      - more than one kanbanger dist installed (shadowing risk);
+      - exactly one dist installed but it's a legacy name
+        (kanban-project-sync from v2, or the pre-rename
+        kanbanger-partymix) -> stale install, uninstall + reinstall
+        under the canonical name;
+      - no dist metadata at all (detached editable / PYTHONPATH access).
+    """
     label = "Install collision detector"
     try:
         import importlib.metadata as md
@@ -871,15 +892,25 @@ def check_install_collision():
             found.append((name, ver))
         except md.PackageNotFoundError:
             pass
+    legacy_found = [n for n, _ in found if n in LEGACY_KANBANGER_DISTS]
     if len(found) > 1:
         names_versions = ", ".join(f"{n}=={v}" for n, v in found)
+        uninstalls = "; ".join(f"`pip uninstall {n}`" for n in legacy_found) \
+            or "`pip uninstall` the dist you don't need"
         _emit(WARN_TAG, label,
               f"multiple kanbanger dists installed: {names_versions}",
-              "Multiple kanbanger dists installed; check for shadowing conflicts. "
-              "`pip uninstall` the dist you don't need and keep the single "
-              "global kanbanger-partymix install (re-run `kanbanger init` "
-              "per project if its .mcp.json needs re-pointing).")
-    elif len(found) == 1:
+              f"Multiple kanbanger dists installed; check for shadowing "
+              f"conflicts. {uninstalls}, keeping the single global "
+              f"{CANONICAL_DIST} install (re-run `kanbanger init` "
+              f"per project if its .mcp.json needs re-pointing).")
+    elif legacy_found:
+        n, v = found[0]
+        _emit(WARN_TAG, label,
+              f"legacy dist {n}=={v} installed "
+              f"(this project now ships as '{CANONICAL_DIST}')",
+              f"`pip uninstall {n}` (or `pipx uninstall {n}`), then install "
+              f"the renamed dist: `pipx install {CANONICAL_DIST}`.")
+    elif found:
         n, v = found[0]
         _emit(PASS_TAG, label, f"only {n}=={v} installed (no collision)")
     else:
@@ -1066,7 +1097,7 @@ def render_report(report: DoctorReport) -> str:
 def main():
     parser = argparse.ArgumentParser(
         prog="kanban-doctor",
-        description="Preflight checks for kanbanger-partymix deployment.",
+        description="Preflight checks for kanbanger deployment.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Run from a workspace containing _kanban.md, or pass --workspace.",
     )

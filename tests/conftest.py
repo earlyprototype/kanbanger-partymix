@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for kanbanger-partymix tests."""
+"""Shared pytest fixtures for kanbanger tests."""
 
 from __future__ import annotations
 

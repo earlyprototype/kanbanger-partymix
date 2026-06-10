@@ -1,8 +1,8 @@
-# kanbanger-partymix
+# kanbanger
 
 **MCP-first task management** — your AI assistant manages a markdown kanban board, optionally synced to GitHub Projects V2.
 
-kanbanger-partymix is an **MCP (Model Context Protocol) server** that gives AI assistants structured tools to manage your tasks. The board lives in plain markdown (`_kanban.md`) in your project root; the AI adds, moves, and syncs tasks through validated tools instead of editing files by hand.
+kanbanger is an **MCP (Model Context Protocol) server** that gives AI assistants structured tools to manage your tasks. The board lives in plain markdown (`_kanban.md`) in your project root; the AI adds, moves, and syncs tasks through validated tools instead of editing files by hand.
 
 ## How it works
 
@@ -55,10 +55,16 @@ graph LR
 ### 1. Install kanbanger (once per machine)
 
 ```bash
+pipx install kanbanger   # (once published — PyPI release pending)
+```
+
+Until the PyPI release lands, install from git:
+
+```bash
 pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git
 ```
 
-Not on PyPI yet — install from git or a local clone. Plain `pip install` and `uv tool install` work the same way. No git client? Install from the source zip:
+Plain `pip install` and `uv tool install` work the same way. No git client? Install from the source zip:
 
 ```bash
 pip install https://github.com/earlyprototype/kanbanger-partymix/archive/refs/heads/main.zip
@@ -75,6 +81,14 @@ kanbanger init
 ```
 
 It scaffolds `_kanban.md` (an existing board is never clobbered), writes a `.mcp.json` that targets the global `kanbanger-mcp` command, and adds the agent touchpoint to `CLAUDE.md`. Idempotent — safe to re-run. (Equivalent: ask your AI to call the `setup_project` MCP tool.) See **[INSTALL.md](INSTALL.md)** for the full flow.
+
+**Alternative — register once for every project:** instead of per-project `.mcp.json`, register the server at user scope with one command:
+
+```bash
+claude mcp add --scope user kanbanger -- kanbanger-mcp
+```
+
+Every Claude Code session then has the kanbanger tools; the server binds each project's own `_kanban.md` from the session's working directory. You can still run `kanbanger init` per project to scaffold the board and the `CLAUDE.md` touchpoint.
 
 ### 3. Restart the Claude session
 
