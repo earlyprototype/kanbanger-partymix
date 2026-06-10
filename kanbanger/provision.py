@@ -250,7 +250,8 @@ The board belongs to this project.
 
 **If the Kanbanger tools aren't available** in this session, kanbanger may not
 be installed globally, or this project may not be provisioned yet (no
-`_kanban.md` / `.mcp.json`). Install once (`pipx install kanbanger-partymix`),
+`_kanban.md` / `.mcp.json`). Install once
+(`pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git`),
 then provision this project by calling the MCP `setup_project` tool (or, for
 CLI parity, run `kanbanger init` in the project root), and restart the session.
 {CLAUDE_MD_END}

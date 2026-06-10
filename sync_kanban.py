@@ -25,10 +25,8 @@ from kanban_io import (
 # this sync run. Without it, a shell-level export (e.g. a stale
 # GITHUB_REPO=owner/other-project from another workspace's profile
 # script) silently shadows the `.env` value and routes the sync to
-# the wrong project. Symptom seen during meTube integration
-# 2026-05-18: items written into a sibling repo's Project instead of
-# the intended one, with no error surfaced. See INTEGRATION_REPORT
-# entry B5.
+# the wrong project — items get written into another repo's Project
+# instead of the intended one, with no error surfaced.
 # find_dotenv(usecwd=True): the default `find_dotenv()` walks upward
 # from the *caller module's file location* (i.e. this file's
 # directory), not from the user's CWD. When kanban-sync is invoked
@@ -36,7 +34,6 @@ from kanban_io import (
 # parent-of-source-directory `.env` (e.g. ~/Desktop/AI/.env) and the
 # target project's `.env` is never considered. usecwd=True makes the
 # search start at os.getcwd() so the CWD-closest `.env` wins.
-# Follow-up to PR #1, discovered during meTube integration 2026-05-18.
 try:
     from dotenv import load_dotenv, find_dotenv
     load_dotenv(find_dotenv(usecwd=True), override=True)

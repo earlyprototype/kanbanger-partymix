@@ -49,10 +49,9 @@ Install globally once — `pipx install <path-to-this-clone>` or
 `pipx install git+https://github.com/earlyprototype/kanbanger-partymix.git`
 (plain `pip` works too). Then provision each project from its root with
 `kanbanger init`: scaffolds `_kanban.md`, writes `.mcp.json` targeting the
-global `kanbanger-mcp` command, and adds the agent touchpoint (ADR 0002).
+global `kanbanger-mcp` command, and adds the agent touchpoint (rationale:
+[docs/adr/0002](docs/adr/0002-single-install-and-collision-proof-binding.md)).
 The in-MCP `setup_project` tool does the same from inside a session.
-`scripts/setup-venv.py` is a deprecated shim over the same provisioning
-code — it no longer installs anything.
 
 ### GitHub sync (optional)
 

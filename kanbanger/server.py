@@ -48,38 +48,22 @@ Before using any other tool, check whether the board exists: read the
 
 If `_kanban.md` does NOT exist, Kanbanger is not set up in this project yet.
 Do NOT silently create it. Tell the user, and ask if they want to set
-Kanbanger up here. If they agree, install it locally in this project:
-
-1. If the project is not provisioned yet (no `.venv` / `.mcp.json`), run the
-   local installer from the Kanbanger source (idempotent - reuses an existing
-   venv, backs up any existing .mcp.json):
-       python <kanbanger_source>/scripts/setup-venv.py <project_dir>
-2. Create `_kanban.md` with the canonical 5-column schema
-   (BACKLOG -> TODO -> DOING -> REVIEW -> DONE):
-
-   # <Project Name> Kanban
-
-   ## BACKLOG
-   *   [ ] Future / unprioritised work
-
-   ## TODO
-   *   [ ] Ready to start, prioritised
-
-   ## DOING
-   *   [ ] In progress (keep to 1-3 items)
-
-   ## REVIEW
-   *   [ ] AI-completed work awaiting human approval
-
-   ## DONE
-   *   [x] Completed, human-approved work
+Kanbanger up here. If they agree, call the `setup_project` tool: it
+provisions the project idempotently - scaffolds the canonical 5-column
+board (BACKLOG -> TODO -> DOING -> REVIEW -> DONE), writes a `.mcp.json`
+targeting the global `kanbanger-mcp` command, and adds the agent
+touchpoint. (`kanbanger init` run from the project root is the CLI
+equivalent.) Never hand-create or hand-edit the board.
 
 If `_kanban.md` already exists, proceed normally.
 
 ## Capabilities
-- Tools: add, move, delete, list tasks; sync to GitHub.
-- Resources: current board (kanban://current-board), stats, sync status.
-- Prompts: kanban awareness, task planning, daily standup.
+- Tools: add, move, delete, list tasks; propose_done / approve_done /
+  reject_review (the REVIEW gate); sync to GitHub; setup_project.
+- Resources: current board (kanban://current-board), stats, sync status,
+  config.
+- Prompts: kanban awareness, task planning, daily standup, review-gate
+  etiquette, sync check.
 
 ## REVIEW gates DONE
 AI-completed work moves to REVIEW, never straight to DONE. A human approves

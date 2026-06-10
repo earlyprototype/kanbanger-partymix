@@ -16,7 +16,7 @@ This is the single most important rule, so it comes first:
 The board is `<workspace>/_kanban.md` for the **current project** — where
 `<workspace>` is the `KANBANGER_WORKSPACE` env var, or the project's working
 directory if that's unset. The kanbanger **install** is global (one
-`kanbanger-mcp` on PATH — ADR 0002), but the **board** is per-project, wired
+`kanbanger-mcp` on PATH), but the **board** is per-project, wired
 by each project's own `.mcp.json`. There is no single global board. The board
 belongs to the project you're in.
 

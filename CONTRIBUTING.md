@@ -11,7 +11,7 @@ Be respectful, collaborative, and constructive. We're all here to make task mana
 ### Reporting Bugs
 
 **Before submitting a bug report:**
-- Check the [Issues](https://github.com/earlyprototype/kanbanger/issues) to see if it's already reported
+- Check the [Issues](https://github.com/earlyprototype/kanbanger-partymix/issues) to see if it's already reported
 - Try the latest version from `main` branch
 - Check the [Troubleshooting section](README.md#troubleshooting) in the README
 
@@ -51,7 +51,7 @@ Be respectful, collaborative, and constructive. We're all here to make task mana
 ### Suggesting Features
 
 **Before suggesting a feature:**
-- Check [existing issues](https://github.com/earlyprototype/kanbanger/issues) and [planned features](CHANGELOG.md#unreleased)
+- Check [existing issues](https://github.com/earlyprototype/kanbanger-partymix/issues) and [planned features](CHANGELOG.md#unreleased)
 - Consider if it fits kanbanger's core philosophy (simplicity, markdown-first, LLM-friendly)
 
 **When suggesting a feature, include:**
@@ -79,8 +79,8 @@ Be respectful, collaborative, and constructive. We're all here to make task mana
 
 1. **Fork and clone:**
 ```bash
-git clone https://github.com/YOUR_USERNAME/kanbanger.git
-cd kanbanger
+git clone https://github.com/YOUR_USERNAME/kanbanger-partymix.git
+cd kanbanger-partymix
 ```
 
 2. **Create a branch:**
@@ -197,7 +197,19 @@ def sync_task_to_github(task: dict, status: str) -> str:
 
 #### Testing Guidelines
 
-Currently, kanbanger doesn't have automated tests (contributions welcome!). When testing:
+Kanbanger has an automated pytest suite covering the MCP tools, the REVIEW
+gate, provisioning, board I/O, the doctor, and a stdio end-to-end probe.
+CI runs it on every pull request (Python 3.10 and 3.12). Run it locally
+before opening a PR:
+
+```bash
+pip install -e ".[mcp]"
+pip install pytest pytest-cov
+python -m pytest --cov --cov-report=term-missing --cov-fail-under=25
+```
+
+Add tests for any behaviour you change. The GitHub-API sync path is not
+exercised against the real API, so for sync changes also test manually:
 
 1. **Test with a test project** - Don't use your production project board
 2. **Test all operations:**
@@ -205,17 +217,7 @@ Currently, kanbanger doesn't have automated tests (contributions welcome!). When
    - Move tasks between columns
    - Delete tasks (archive)
    - Handle edge cases (empty boards, special characters)
-3. **Test different environments:**
-   - Windows PowerShell
-   - Linux bash
-   - macOS zsh (if available)
-4. **Document test results** in your PR
-
-**Future testing improvements we'd love:**
-- Unit tests for parsing logic
-- Integration tests with GitHub API (mocked)
-- End-to-end tests with test projects
-- CI/CD pipeline with automated testing
+3. **Document test results** in your PR
 
 ### Improving Documentation
 
@@ -233,7 +235,6 @@ Documentation contributions are highly valued!
 - Include examples - Show, don't just tell
 - Keep it current - Update when features change
 - UK English spelling
-- No emoji in documentation (per project rules)
 
 ### Translations
 
@@ -308,9 +309,9 @@ kanbanger-partymix/
 
 ## Questions?
 
-- **General questions:** Open a [Discussion](https://github.com/earlyprototype/kanbanger/discussions)
-- **Bug reports:** Open an [Issue](https://github.com/earlyprototype/kanbanger/issues)
-- **Security issues:** Email maintainers (see README for contact)
+- **General questions:** Open a [Discussion](https://github.com/earlyprototype/kanbanger-partymix/discussions)
+- **Bug reports:** Open an [Issue](https://github.com/earlyprototype/kanbanger-partymix/issues)
+- **Security issues:** Open an [Issue](https://github.com/earlyprototype/kanbanger-partymix/issues) marked as security-related
 
 ## Recognition
 

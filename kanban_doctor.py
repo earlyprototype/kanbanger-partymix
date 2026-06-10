@@ -358,8 +358,7 @@ def check_token_format(token):
         # but they refresh whenever `gh auth login` runs again, so they
         # are not stable for long-lived automation. WARN, don't FAIL —
         # downstream checks (Repo visible / Projects V2 / Status field)
-        # validate that the token actually works. See INTEGRATION_REPORT
-        # entry B3.
+        # validate that the token actually works.
         _emit(WARN_TAG, label,
               "starts with 'gho_' (OAuth user token from `gh auth login`)",
               "OAuth tokens work but get refreshed whenever `gh auth login` "
@@ -435,7 +434,7 @@ def check_repo_format(local_only=False):
         return None
     if "/" not in repo:
         _emit(FAIL_TAG, label, f"'{repo}' missing '/' separator",
-              "Format must be 'owner/repo' (e.g. earlyprototype/kanbanger)")
+              "Format must be 'owner/repo' (e.g. earlyprototype/kanbanger-partymix)")
         return None
     parts = repo.split("/")
     if len(parts) != 2 or not all(parts):
@@ -572,8 +571,7 @@ def check_status_field(projects):
     # is auto-injected by kanbanger.server at startup, and
     # sync_kanban.LocalBoard.parse maps `## REVIEW` -> Status="Review".
     # The GH Project's Status field must therefore expose all five
-    # options or REVIEW items land with no Status. See
-    # INTEGRATION_REPORT entry B4.
+    # options or REVIEW items land with no Status.
     required = {"Backlog", "Todo", "InProgress", "Review", "Done"}
     missing = required - opts
     if missing:
@@ -657,7 +655,9 @@ def check_kanbanger_importable():
         return source_path, version
     except ImportError as e:
         _emit(WARN_TAG, label, f"not importable: {e}",
-              "Run scripts/setup-venv.py to provision a per-project venv.")
+              "Install kanbanger globally: pipx install "
+              "git+https://github.com/earlyprototype/kanbanger-partymix.git "
+              "(then `kanbanger init` in the project root).")
         return None, None
 
 
@@ -681,8 +681,9 @@ def check_install_collision():
         _emit(WARN_TAG, label,
               f"multiple kanbanger dists installed: {names_versions}",
               "Multiple kanbanger dists installed; check for shadowing conflicts. "
-              "Use scripts/setup-venv.py (per-project venv) to isolate, "
-              "or `pip uninstall` the one not needed for this project.")
+              "`pip uninstall` the dist you don't need and keep the single "
+              "global kanbanger-partymix install (re-run `kanbanger init` "
+              "per project if its .mcp.json needs re-pointing).")
     elif len(found) == 1:
         n, v = found[0]
         _emit(PASS_TAG, label, f"only {n}=={v} installed (no collision)")

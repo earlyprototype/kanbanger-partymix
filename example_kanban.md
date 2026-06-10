@@ -1,18 +1,19 @@
-# Project Kanban Board
+# Project Kanban
 
-## 1. BACKLOG
-*   [ ] Research GraphQL pagination best practices
+## BACKLOG
+*   [ ] Research export formats
 *   [ ] Add support for custom field mappings
-*   [ ] Write comprehensive test suite
 
-## 2. TO DO
+## TODO
 *   [ ] Update documentation with examples
 *   [ ] Add error handling for network timeouts
 
-## 3. DOING
+## DOING
+*   [ ] Implement user authentication API
 
-## 4. DONE
-*   [x] Parse markdown kanban format
-*   [x] Connect to GitHub Projects API
+## REVIEW
+*   [ ] Refactor configuration loading
+
+## DONE
+*   [x] Set up project scaffolding
 *   [x] Create state tracking system
-*   [x] Implement bidirectional sync logic
