@@ -20,12 +20,22 @@ additions:
   - ADR 0002 binding triple in the header (issue #15 step 5):
     `workspace resolved = X -> board = Y -> key = Z`, rendered from one
     kanbanger.binding.resolve_binding() call
+  - local-only mode (issue #18): when GitHub sync is plainly not
+    configured (no GITHUB_TOKEN / GITHUB_REPO from the shell env, the
+    workspace .env, or a .mcp.json literal default), the credential /
+    repo not-set checks SKIP instead of FAIL and a "local-only mode"
+    line makes the state explicit. Half-configured sync still FAILs.
+  - GitHub config-source transparency (issue #18): doctor states where
+    each GitHub value came from (shell env / workspace .env / not set)
+    and notes when the ambient env disagrees with what the project's
+    .mcp.json would provide to a launched server.
 
 Usage:
     kanban-doctor                    # run from a workspace with _kanban.md
     kanban-doctor --workspace PATH   # run against a specific workspace
     kanban-doctor --strict           # treat WARN as FAIL for exit code
     kanban-doctor --no-network       # skip network-requiring checks
+    kanban-doctor --local-only       # assert local-only: missing GitHub config SKIPs
 
 Exit codes:
     0 -- all checks passed (WARN may be present unless --strict)
@@ -49,6 +59,14 @@ GITHUB_API = "https://api.github.com/graphql"
 CLASSIC_PAT_RE = re.compile(r"^ghp_[A-Za-z0-9]{36}$")
 EXPECTED_STATE_SCHEMA_VERSION = 1
 KNOWN_KANBANGER_DISTS = ("kanban-project-sync", "kanbanger-partymix")
+# The two env vars that decide whether GitHub sync is configured at all
+# (GITHUB_PROJECT_NUMBER is an optional refinement, not a config signal).
+GITHUB_SYNC_VARS = ("GITHUB_TOKEN", "GITHUB_REPO")
+# `${VAR}` / `${VAR:-default}` placeholder syntax used in .mcp.json env
+# blocks (written by kanbanger.provision, resolved by the MCP client).
+MCP_PLACEHOLDER_RE = re.compile(
+    r"^\$\{(?P<var>[A-Za-z_][A-Za-z0-9_]*)(?::-(?P<default>.*))?\}$"
+)
 
 
 # ----- Output helpers ----------------------------------------------------
@@ -157,10 +175,159 @@ def check_env_file(workspace):
               "If env vars come from your shell instead, this is fine. Otherwise: create .env with GITHUB_TOKEN and GITHUB_REPO")
 
 
-def check_token_present():
+# ----- GitHub config sources + local-only detection (issue #18) -----------
+
+def read_env_file_values(workspace):
+    """Return the non-empty values the workspace .env supplies.
+
+    Used for source attribution and local-only detection. Prefers
+    python-dotenv's parser; falls back to a minimal KEY=VALUE parse so
+    detection still works when dotenv isn't installed (in which case the
+    values are NOT merged into os.environ -- the checks won't see them,
+    but their existence still disables local-only mode).
+    """
+    env_path = workspace / ".env"
+    if not env_path.exists():
+        return {}
+    if load_dotenv is not None:
+        from dotenv import dotenv_values
+        return {k: v for k, v in dotenv_values(env_path).items() if v}
+    values = {}
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export "):]
+            key, _, val = line.partition("=")
+            val = val.strip().strip("'\"")
+            if val:
+                values[key.strip()] = val
+    except OSError:
+        pass  # unreadable .env: attribution degrades, check_env_file reports it
+    return values
+
+
+def read_mcp_project_env(workspace):
+    """Parse <workspace>/.mcp.json's kanbanger env block.
+
+    Returns (mcp_json_exists, literals). `literals` maps env var -> the
+    value the PROJECT ITSELF would supply at server launch:
+      - plain literal value         -> itself
+      - ${VAR:-default} placeholder -> the literal default ('' if empty)
+      - ${VAR} placeholder          -> '' (pure ambient pass-through)
+    The MCP client resolves ${VAR:-default} against ITS environment first,
+    so literals are what the project guarantees from its own config alone.
+    `literals` is None when .mcp.json exists but cannot be parsed.
+    """
+    mcp_path = workspace / ".mcp.json"
+    if not mcp_path.exists():
+        return False, {}
+    try:
+        data = json.loads(mcp_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return True, None
+    servers = data.get("mcpServers")
+    if not isinstance(servers, dict):
+        return True, {}
+    env_block = {}
+    for name, server in servers.items():
+        if "kanbanger" in name.lower() and isinstance(server, dict):
+            env_block = server.get("env") or {}
+            break
+    literals = {}
+    for var, raw in env_block.items():
+        if not isinstance(raw, str):
+            continue
+        match = MCP_PLACEHOLDER_RE.match(raw)
+        literals[var] = (match.group("default") or "") if match else raw
+    return True, literals
+
+
+def is_local_only(env_file_vals, mcp_literals):
+    """True when GitHub sync is plainly not configured anywhere.
+
+    Rule: neither GITHUB_TOKEN nor GITHUB_REPO is supplied by the
+    effective env (shell, plus workspace .env after check_env_file's
+    merge), by an unmerged .env (dotenv missing), or by a non-empty
+    .mcp.json literal/default. ANY single signal disables local-only:
+    a half-configured sync must keep FAILing.
+    """
+    for var in GITHUB_SYNC_VARS:
+        if os.environ.get(var):
+            return False
+        if env_file_vals.get(var):
+            return False
+        if mcp_literals and mcp_literals.get(var):
+            return False
+    return True
+
+
+def _mcp_divergence_notes(mcp_literals):
+    """Notes for each GitHub var where ambient env and the project's
+    .mcp.json would disagree at server launch. Values are never printed
+    here (the source lines above show the repo; tokens never appear)."""
+    notes = []
+    for var in GITHUB_SYNC_VARS:
+        ambient = os.environ.get(var)
+        project = (mcp_literals or {}).get(var, "")
+        if ambient and not project:
+            notes.append(
+                f"note: ambient env supplies {var} but this project's "
+                ".mcp.json does not -- a launched server may see different config")
+        elif ambient and project and ambient != project:
+            notes.append(
+                f"note: ambient {var} differs from this project's .mcp.json "
+                "default -- a launched server may see different config")
+        elif project and not ambient:
+            notes.append(
+                f"note: this project's .mcp.json supplies {var} but the "
+                "ambient env does not -- doctor validates the ambient view only")
+    return notes
+
+
+def print_config_sources(env_file_vals, mcp_exists, mcp_literals, forced, local_only):
+    """Issue #18 item 2: state WHERE each GitHub value came from and flag
+    ambient-vs-.mcp.json disagreement.
+
+    Plain prints like print_binding -- informational context, never
+    counted, never exit-affecting. The checks below still consume the
+    ambient env only (beyond the local-only gating of the not-set case).
+    """
+    for var in GITHUB_SYNC_VARS:
+        effective = os.environ.get(var)
+        if not effective:
+            origin = "not set"
+        elif load_dotenv is not None and env_file_vals.get(var):
+            origin = "workspace .env"  # load_dotenv(override=True) means .env won
+        else:
+            origin = "shell env"
+        if effective and var != "GITHUB_TOKEN":
+            origin += f" ('{effective}')"
+        print(f"  {var}: {origin}")
+    if mcp_exists and mcp_literals is None:
+        print("  note: .mcp.json present but unparseable -- cannot compare project config")
+    elif mcp_exists:
+        for note in _mcp_divergence_notes(mcp_literals):
+            print(f"  {note}")
+    if local_only and forced:
+        print("  local-only mode (--local-only) -- missing GitHub sync config will SKIP, not FAIL")
+    elif local_only:
+        print("  local-only mode -- GitHub sync not configured; GitHub checks skip instead of fail")
+
+
+def check_token_present(local_only=False):
     label = "GITHUB_TOKEN"
     token = os.environ.get("GITHUB_TOKEN")
     if not token:
+        if local_only:
+            # Local-only boards are a fully supported, healthy state: the
+            # check is not applicable, so SKIP (WARN would turn a healthy
+            # board into exit 1 under --strict).
+            _emit(SKIP_TAG, label,
+                  "not set (local-only mode -- GitHub sync not configured)")
+            return None
         _emit(FAIL_TAG, label, "not set",
               "Set GITHUB_TOKEN in .env or your shell environment")
         return None
@@ -253,10 +420,16 @@ def check_token_works(token, no_network):
     return None
 
 
-def check_repo_format():
+def check_repo_format(local_only=False):
     label = "GITHUB_REPO"
     repo = os.environ.get("GITHUB_REPO")
     if not repo:
+        if local_only:
+            # Same rationale as check_token_present: not applicable, not
+            # a defect -- SKIP keeps --strict meaningful for real WARNs.
+            _emit(SKIP_TAG, label,
+                  "not set (local-only mode -- GitHub sync not configured)")
+            return None
         _emit(FAIL_TAG, label, "not set",
               "Set GITHUB_REPO=owner/repo in .env")
         return None
@@ -576,6 +749,14 @@ def main():
         action="store_true",
         help="Skip checks that require network (GitHub API calls)",
     )
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        help="Assert this board is local-only: missing GitHub sync config "
+             "SKIPs instead of FAILs. (Auto-detected when no GITHUB_TOKEN/"
+             "GITHUB_REPO is supplied by the shell env, the workspace .env, "
+             "or a .mcp.json literal default.)",
+    )
     args = parser.parse_args()
 
     workspace = Path(args.workspace).resolve()
@@ -586,15 +767,25 @@ def main():
 
     _section("Environment")
     check_python_version()
-    check_env_file(workspace)
+    check_env_file(workspace)  # merges workspace .env into os.environ
+
+    # Issue #18: detection must run AFTER the .env merge above so the
+    # effective env is what the credential checks below will consume.
+    env_file_vals = read_env_file_values(workspace)
+    mcp_exists, mcp_literals = read_mcp_project_env(workspace)
+    local_only = args.local_only or is_local_only(env_file_vals, mcp_literals)
+
+    _section("GitHub config sources")
+    print_config_sources(env_file_vals, mcp_exists, mcp_literals,
+                         args.local_only, local_only)
 
     _section("GitHub credentials")
-    token = check_token_present()
+    token = check_token_present(local_only)
     check_token_format(token)
     check_token_works(token, args.no_network)
 
     _section("Repo and Projects")
-    repo = check_repo_format()
+    repo = check_repo_format(local_only)
     if token and repo and not args.no_network:
         repo_ok = check_repo_accessible(token, repo, args.no_network)
         if repo_ok:

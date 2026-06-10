@@ -13,6 +13,7 @@ required column for the 5-column partymix release).
 from __future__ import annotations
 
 import io
+import json
 import subprocess
 import sys
 from contextlib import redirect_stdout
@@ -301,6 +302,209 @@ def test_doctor_prints_binding_triple_when_no_board(
         f"binding triple missing/wrong.\nExpected: {expected}\n"
         f"STDOUT:\n{result.stdout}"
     )
+
+
+# --- issue #18: local-only mode + config-source transparency --------------
+# The doctor subprocess inherits this process's environment, so each probe
+# below pins KANBANGER_WORKSPACE to the temp dir and explicitly clears the
+# GitHub vars (the dev shell running pytest may have them set).
+
+
+def _clear_github_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for var in ("GITHUB_TOKEN", "GITHUB_REPO", "GITHUB_PROJECT_NUMBER"):
+        monkeypatch.delenv(var, raising=False)
+
+
+def test_doctor_local_only_unconfigured_workspace_exits_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Issue #18 item 1: healthy board, no GitHub config anywhere (shell env,
+    .env, .mcp.json) -> local-only mode: exit 0 with an explicit mode line,
+    and the credential/repo not-set checks SKIP instead of FAIL."""
+    (tmp_path / "_kanban.md").write_text(VALID_BOARD, encoding="utf-8")
+    _clear_github_env(monkeypatch)
+    monkeypatch.setenv("KANBANGER_WORKSPACE", str(tmp_path))
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 0, (
+        f"doctor exit {result.returncode} on healthy local-only workspace.\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    assert "local-only mode" in result.stdout
+    assert "GitHub sync not configured" in result.stdout
+    assert "GITHUB_TOKEN: not set" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "var,value",
+    [
+        ("GITHUB_REPO", "owner/repo"),
+        ("GITHUB_TOKEN", "ghp_" + "A" * 36),
+    ],
+)
+def test_doctor_half_configured_sync_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, var: str, value: str
+):
+    """Issue #18 item 1 guard: one GitHub var set without the other is a
+    half-configured sync -- a real problem, so still FAIL / exit 1."""
+    (tmp_path / "_kanban.md").write_text(VALID_BOARD, encoding="utf-8")
+    _clear_github_env(monkeypatch)
+    monkeypatch.setenv("KANBANGER_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv(var, value)
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 1, (
+        f"expected exit 1 for half-configured sync ({var} only), got "
+        f"{result.returncode}.\nSTDOUT:\n{result.stdout}"
+    )
+    assert "local-only mode" not in result.stdout
+
+
+def test_doctor_fully_configured_unchanged_and_attributes_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Issue #18 item 1 guard + item 2 minimum bar: with both vars in the
+    shell env the doctor behaves as before (exit 0, no local-only line)
+    and states where each GitHub value came from."""
+    (tmp_path / "_kanban.md").write_text(VALID_BOARD, encoding="utf-8")
+    _clear_github_env(monkeypatch)
+    monkeypatch.setenv("KANBANGER_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_REPO", "owner/repo")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "A" * 36)
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 0, result.stdout
+    assert "local-only mode" not in result.stdout
+    assert "GITHUB_REPO: shell env ('owner/repo')" in result.stdout
+    assert "GITHUB_TOKEN: shell env" in result.stdout
+    # the raw token value must never appear (only the masked ghp_...AAAA form)
+    assert ("ghp_" + "A" * 36) not in result.stdout
+
+
+def test_doctor_notes_ambient_vs_mcp_json_divergence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Issue #18 item 2: ambient env supplies GITHUB_REPO while the
+    project's .mcp.json slot is an empty `${GITHUB_REPO:-}` placeholder
+    (the shape kanbanger.provision writes) -> explicit divergence note."""
+    (tmp_path / "_kanban.md").write_text(VALID_BOARD, encoding="utf-8")
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "kanbanger": {
+                        "command": "kanbanger-mcp",
+                        "env": {
+                            "KANBANGER_WORKSPACE": "${KANBANGER_WORKSPACE:-"
+                            + str(tmp_path)
+                            + "}",
+                            "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
+                            "GITHUB_REPO": "${GITHUB_REPO:-}",
+                            "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER:-}",
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _clear_github_env(monkeypatch)
+    monkeypatch.setenv("KANBANGER_WORKSPACE", str(tmp_path))
+    monkeypatch.setenv("GITHUB_REPO", "owner/leaked")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "A" * 36)
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 0, result.stdout
+    assert (
+        "ambient env supplies GITHUB_REPO but this project's .mcp.json "
+        "does not -- a launched server may see different config"
+    ) in result.stdout, f"divergence note missing.\nSTDOUT:\n{result.stdout}"
+
+
+def test_doctor_mcp_pinned_default_disables_local_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A non-empty .mcp.json default counts as sync config: local-only must
+    NOT trigger (missing token stays FAIL -> exit 1) and the project-supplies
+    direction of the divergence note appears."""
+    (tmp_path / "_kanban.md").write_text(VALID_BOARD, encoding="utf-8")
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "kanbanger": {
+                        "command": "kanbanger-mcp",
+                        "env": {
+                            "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
+                            "GITHUB_REPO": "${GITHUB_REPO:-owner/pinned}",
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    _clear_github_env(monkeypatch)
+    monkeypatch.setenv("KANBANGER_WORKSPACE", str(tmp_path))
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 1, result.stdout
+    assert "local-only mode" not in result.stdout
+    assert (
+        "this project's .mcp.json supplies GITHUB_REPO but the ambient env "
+        "does not" in result.stdout
+    ), f"project-supplies note missing.\nSTDOUT:\n{result.stdout}"
+
+
+def test_doctor_env_file_supplying_repo_counts_as_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A workspace .env supplying GITHUB_REPO disables local-only (so the
+    missing token stays FAIL) and the source line attributes the value to
+    the .env, not the shell."""
+    (tmp_path / "_kanban.md").write_text(VALID_BOARD, encoding="utf-8")
+    (tmp_path / ".env").write_text("GITHUB_REPO=owner/envrepo\n", encoding="utf-8")
+    _clear_github_env(monkeypatch)
+    monkeypatch.setenv("KANBANGER_WORKSPACE", str(tmp_path))
+    result = _run_doctor(tmp_path)
+    assert result.returncode == 1, result.stdout
+    assert "local-only mode" not in result.stdout
+    assert "GITHUB_REPO: workspace .env ('owner/envrepo')" in result.stdout
+
+
+def test_read_mcp_project_env_parses_placeholders(tmp_path: Path):
+    """`${VAR:-default}` -> default, `${VAR}` -> '', plain string -> itself."""
+    import kanban_doctor
+
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "kanbanger": {
+                        "env": {
+                            "GITHUB_REPO": "${GITHUB_REPO:-owner/pinned}",
+                            "GITHUB_TOKEN": "${GITHUB_TOKEN:-}",
+                            "GITHUB_PROJECT_NUMBER": "${GITHUB_PROJECT_NUMBER}",
+                            "KANBANGER_WORKSPACE": "C:/literal/path",
+                        }
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    exists, literals = kanban_doctor.read_mcp_project_env(tmp_path)
+    assert exists is True
+    assert literals == {
+        "GITHUB_REPO": "owner/pinned",
+        "GITHUB_TOKEN": "",
+        "GITHUB_PROJECT_NUMBER": "",
+        "KANBANGER_WORKSPACE": "C:/literal/path",
+    }
+
+
+def test_read_mcp_project_env_handles_missing_and_unparseable(tmp_path: Path):
+    """No .mcp.json -> (False, {}); invalid JSON -> (True, None)."""
+    import kanban_doctor
+
+    assert kanban_doctor.read_mcp_project_env(tmp_path) == (False, {})
+    (tmp_path / ".mcp.json").write_text("{ not json", encoding="utf-8")
+    assert kanban_doctor.read_mcp_project_env(tmp_path) == (True, None)
 
 
 def test_doctor_flags_corrupt_state_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
