@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Distribution renamed `kanbanger-partymix` → `kanbanger` for the PyPI
+  release (issue #22).** The import package (`kanbanger`) and all console
+  scripts are unchanged — only the dist name moves. Pre-rename installs are
+  stale: `pip uninstall kanbanger-partymix`; `kanban-doctor`'s
+  install-collision check now flags the old dist (and v2's
+  `kanban-project-sync`) with that remediation. Public packaging metadata
+  added (README long-description, MIT license, classifiers, project URLs),
+  plus a tag-triggered GitHub release workflow that publishes via PyPI
+  trusted publishing.
 - **MCP server ported off `mcp-use` onto the native `mcp` SDK (FastMCP).**
   `mcp-use` eagerly imported langchain/transformers/torch at startup (~24-48s
   warm, up to ~257s cold), blowing the 30s MCP client handshake timeout and

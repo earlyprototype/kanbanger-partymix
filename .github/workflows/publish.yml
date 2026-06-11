@@ -1,0 +1,35 @@
+name: Publish to PyPI
+
+# Publishing is user-gated: it runs only when a GitHub release is published
+# (release ritual: bump kanbanger/__init__.py __version__ -> tag vX.Y.Z ->
+# publish a GitHub release for that tag). Uses PyPI trusted publishing
+# (OIDC) — no API tokens or repo secrets involved.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    # Guard: only version tags (v*) publish.
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # required for PyPI trusted publishing (OIDC)
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

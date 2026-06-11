@@ -228,6 +228,91 @@ def test_status_field_passes_on_full_five_column_project(monkeypatch: pytest.Mon
     assert "all five" in out
 
 
+# --- issue #22: dist rename (kanbanger-partymix -> kanbanger) --------------
+# The install-collision check must treat the canonical dist as healthy,
+# flag pre-rename installs as stale/legacy with a pip uninstall
+# remediation, and keep warning on true multi-dist collisions.
+
+
+def _fake_dist_versions(monkeypatch: pytest.MonkeyPatch, installed: dict) -> None:
+    """Patch importlib.metadata.version to a fixed installed-dists mapping."""
+    import importlib.metadata as md
+
+    def fake_version(name: str) -> str:
+        try:
+            return installed[name]
+        except KeyError:
+            raise md.PackageNotFoundError(name)
+
+    monkeypatch.setattr(md, "version", fake_version)
+
+
+def test_collision_passes_on_single_canonical_dist(monkeypatch: pytest.MonkeyPatch):
+    """Only the renamed `kanbanger` dist installed -> PASS, no collision."""
+    import kanban_doctor
+
+    _fake_dist_versions(monkeypatch, {"kanbanger": "3.0.0"})
+    out, counts = _capture_check(kanban_doctor.check_install_collision)
+    assert counts["pass"] == 1, out
+    assert "only kanbanger==3.0.0 installed" in out
+
+
+def test_collision_flags_lone_legacy_partymix_dist(monkeypatch: pytest.MonkeyPatch):
+    """A machine still carrying the pre-rename dist is a stale install:
+    WARN (even with no other dist present) and remediation says
+    `pip uninstall kanbanger-partymix`."""
+    import kanban_doctor
+
+    _fake_dist_versions(monkeypatch, {"kanbanger-partymix": "3.0.0"})
+    out, counts = _capture_check(kanban_doctor.check_install_collision)
+    assert counts["warn"] == 1, out
+    assert counts["pass"] == 0, out
+    assert "legacy dist kanbanger-partymix==3.0.0" in out
+    assert "pip uninstall kanbanger-partymix" in out
+    assert "pipx install kanbanger" in out
+
+
+def test_collision_flags_lone_legacy_v2_dist(monkeypatch: pytest.MonkeyPatch):
+    """The v2-era kanban-project-sync dist gets the same stale-install WARN."""
+    import kanban_doctor
+
+    _fake_dist_versions(monkeypatch, {"kanban-project-sync": "2.1.0"})
+    out, counts = _capture_check(kanban_doctor.check_install_collision)
+    assert counts["warn"] == 1, out
+    assert "legacy dist kanban-project-sync==2.1.0" in out
+    assert "pip uninstall kanban-project-sync" in out
+
+
+def test_collision_warns_on_canonical_plus_legacy(monkeypatch: pytest.MonkeyPatch):
+    """Renamed dist + pre-rename dist both installed -> collision WARN naming
+    both, with the uninstall pointed at the legacy dist only."""
+    import kanban_doctor
+
+    _fake_dist_versions(
+        monkeypatch, {"kanbanger": "3.0.0", "kanbanger-partymix": "3.0.0"}
+    )
+    out, counts = _capture_check(kanban_doctor.check_install_collision)
+    assert counts["warn"] == 1, out
+    assert "multiple kanbanger dists installed" in out
+    assert "kanbanger==3.0.0" in out
+    assert "kanbanger-partymix==3.0.0" in out
+    assert "pip uninstall kanbanger-partymix" in out
+    assert "pip uninstall kanbanger`" not in out  # never uninstall the canonical dist
+
+
+def test_version_consistency_prefers_canonical_dist(monkeypatch: pytest.MonkeyPatch):
+    """With old and new dists both present, the version-consistency check
+    reads the canonical `kanbanger` dist (repointed for issue #22)."""
+    import kanban_doctor
+
+    _fake_dist_versions(
+        monkeypatch, {"kanbanger": "3.0.0", "kanbanger-partymix": "2.9.0"}
+    )
+    out, counts = _capture_check(kanban_doctor.check_version_consistency, "3.0.0")
+    assert counts["pass"] == 1, out
+    assert "kanbanger dist==3.0.0" in out
+
+
 # --- ADR 0002 binding triple (issue #15 step 5) ---------------------------
 # The doctor header must render `workspace resolved = X -> board = Y ->
 # key = Z` from one resolve_binding() call. KANBANGER_WORKSPACE is pinned

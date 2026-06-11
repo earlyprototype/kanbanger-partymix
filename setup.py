@@ -21,11 +21,58 @@ def read_version() -> str:
     return match.group(1)
 
 
+def read_long_description() -> str:
+    """PyPI page body: the README, verbatim (text/markdown)."""
+    readme_path = Path(__file__).resolve().parent / "README.md"
+    return readme_path.read_text(encoding="utf-8")
+
+
 setup(
-    name="kanbanger-partymix",
+    # Distribution renamed from "kanbanger-partymix" for the PyPI release
+    # (issue #22). The import package was always "kanbanger", so only the
+    # dist metadata changes; pre-rename installs are flagged as legacy by
+    # kanban-doctor's install-collision check.
+    name="kanbanger",
     version=read_version(),
-    description="Sync markdown kanban boards to GitHub Projects with MCP server support",
+    description=(
+        "MCP server for a markdown kanban board (_kanban.md) with a "
+        "human-gated review column and optional one-way sync to GitHub "
+        "Projects V2"
+    ),
+    long_description=read_long_description(),
+    long_description_content_type="text/markdown",
     author="Fab2",
+    license="MIT",
+    url="https://github.com/earlyprototype/kanbanger-partymix",
+    project_urls={
+        "Homepage": "https://github.com/earlyprototype/kanbanger-partymix",
+        "Source": "https://github.com/earlyprototype/kanbanger-partymix",
+        "Issues": "https://github.com/earlyprototype/kanbanger-partymix/issues",
+        "Changelog": "https://github.com/earlyprototype/kanbanger-partymix/blob/main/CHANGELOG.md",
+    },
+    keywords=[
+        "kanban",
+        "mcp",
+        "model-context-protocol",
+        "claude",
+        "task-management",
+        "github-projects",
+        "markdown",
+        "ai-agents",
+    ],
+    classifiers=[
+        "Development Status :: 4 - Beta",
+        "Environment :: Console",
+        "Intended Audience :: Developers",
+        "Operating System :: OS Independent",
+        "Programming Language :: Python :: 3",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Topic :: Software Development",
+        "Topic :: Utilities",
+    ],
     packages=find_packages(exclude=["tests", "tests.*"]),
     py_modules=["sync_kanban", "kanban_io", "kanban_doctor"],
     install_requires=[

@@ -1,4 +1,4 @@
-# Install — kanbanger-partymix
+# Install — kanbanger
 
 ## TL;DR
 
@@ -17,8 +17,9 @@ kanbanger init
 Then open a fresh Claude Code session in that project. The kanbanger MCP
 server loads via the project's `.mcp.json`.
 
-(Not on PyPI yet — install from git or a local clone for now. Plain `pip`
-and `uv tool install` work the same way if you don't use pipx.)
+(Once published to PyPI this becomes `pipx install kanbanger` — not on PyPI
+yet, so install from git or a local clone for now. Plain `pip` and
+`uv tool install` work the same way if you don't use pipx.)
 
 ## The model: install once, provision per project
 
@@ -141,8 +142,8 @@ reports "local-only mode" and exits 0. For a quick PATH check,
 ## Upgrading / Uninstalling
 
 ```
-pipx upgrade kanbanger-partymix     # pull the latest from the install source
-pipx uninstall kanbanger-partymix   # remove the global install
+pipx upgrade kanbanger     # pull the latest from the install source
+pipx uninstall kanbanger   # remove the global install
 ```
 
 Provisioned files (`_kanban.md`, `.mcp.json`, the `CLAUDE.md` stanza) are
@@ -175,6 +176,11 @@ global `kanbanger-mcp` command:
 If a `kanban-project-sync` dist is installed on the machine,
 `pip uninstall kanban-project-sync` removes it (the install-collision check
 in `kanban-doctor` flags it).
+
+Installs made before the PyPI rename carry the dist name
+`kanbanger-partymix` — run `pip uninstall kanbanger-partymix` (or
+`pipx uninstall kanbanger-partymix`) before/after installing the renamed
+`kanbanger` package; `kanban-doctor` flags the stale dist.
 
 ## Troubleshooting
 

@@ -6,7 +6,7 @@ Guidance for AI agents working in this repository.
 
 ### What this repo is
 
-Single Python package (`kanbanger-partymix`): MCP server for markdown kanban (`_kanban.md`) with optional GitHub Projects sync. No Docker, databases, or long-running dev servers required for tests.
+Single Python package (dist `kanbanger`, repo `kanbanger-partymix`): MCP server for markdown kanban (`_kanban.md`) with optional GitHub Projects sync. No Docker, databases, or long-running dev servers required for tests.
 
 ### PATH
 
